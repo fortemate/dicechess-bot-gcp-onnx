@@ -7,6 +7,9 @@ FROM eclipse-temurin:25-jre-noble@sha256:fbcf915c585659b30eb766ada4d6d7cfc9ec104
 WORKDIR /app
 COPY target/out/jvm/scala-3.8.4/dicechess-bot-gcp-onnx/dicechess-bot-gcp-onnx.jar /app/app.jar
 
+# The application only reads its jar and writes temporary native/model files under /tmp.
+USER 10001:10001
+
 # Container platforms route requests to $PORT (default 8080); Main reads it. EXPOSE is documentation only.
 ENV PORT=8080
 EXPOSE 8080
