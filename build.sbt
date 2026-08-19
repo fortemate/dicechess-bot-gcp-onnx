@@ -47,7 +47,7 @@ ThisBuild / credentials ++= (for {
 } yield Credentials("GitHub Package Registry", "maven.pkg.github.com", user, token)).toSeq
 
 val DiceChessEngineVersion     = "0.3.0"
-val DiceChessBotRuntimeVersion = "1.0.0"
+val DiceChessBotRuntimeVersion = "1.0.1"
 val CirceVersion               = "0.14.16"
 val MunitVersion               = "1.3.5"
 
