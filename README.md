@@ -97,20 +97,32 @@ tracks the most recent release.
 ```bash
 REGION=us-central1
 IMAGE=ghcr.io/fortemate/dicechess-bot-gcp-onnx:latest
+PROJECT_ID=$(gcloud config get-value project)
+BUCKET=your-private-bucket
+SERVICE_ACCOUNT_NAME=dicechess-bot-gcp-onnx
+SERVICE_ACCOUNT_EMAIL="${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+SECRET_NAME=dicechess-webhook-secret
 
-# 1. Put your trained model(s) in a private bucket in the same region as the service.
-#    The optional second ONNX file is the KCP root rescorer (see "KCP root rescoring" above).
-gcloud storage cp oracle-3.onnx gs://<private-bucket>/oracle-3.onnx
-gcloud storage cp kcp_nodice.onnx gs://<private-bucket>/kcp_nodice.onnx
-gcloud storage cp opening_book.tsv gs://<private-bucket>/opening_book.tsv
+# 1. Create a dedicated service identity and grant it read-only access to the model bucket.
+gcloud iam service-accounts create "$SERVICE_ACCOUNT_NAME" \
+  --display-name="Dice Chess ONNX bot"
+gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
+  --member="serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
+  --role=roles/storage.objectViewer
 
-# 2. Deploy with the model mounted read-only + selected via env. Concurrent requests can be served
+# 2. Upload the private runtime assets. The optional second model is the KCP root rescorer.
+gcloud storage cp oracle-3.onnx "gs://$BUCKET/oracle-3.onnx"
+gcloud storage cp kcp_nodice.onnx "gs://$BUCKET/kcp_nodice.onnx"
+gcloud storage cp opening_book.tsv "gs://$BUCKET/opening_book.tsv"
+
+# 3. Deploy with the model mounted read-only + selected via env. Concurrent requests can be served
 #    by one container (ONNX session inference is thread-safe; --concurrency 8 matches tested capacity).
 #    Scale-to-zero avoids idle instances.
 gcloud run deploy dicechess-bot-gcp-onnx \
   --image "$IMAGE" --region "$REGION" \
+  --service-account "$SERVICE_ACCOUNT_EMAIL" \
   --allow-unauthenticated --cpu 1 --memory 1Gi --min-instances 0 --concurrency 8 \
-  --add-volume=name=models,type=cloud-storage,bucket=<private-bucket>,readonly=true \
+  --add-volume=name=models,type=cloud-storage,bucket="$BUCKET",readonly=true,mount-options="uid=10001;gid=10001" \
   --add-volume-mount=volume=models,mount-path=/models \
   --set-env-vars MODEL_PATH=/models/oracle-3.onnx,OPENING_BOOK_PATH=/models/opening_book.tsv,ORACLE_FEATURES=rich,RESCORE_MODEL_PATH=/models/kcp_nodice.onnx
 ```
@@ -132,8 +144,19 @@ curl -X POST "$BASE/bot/register" -H "Content-Type: application/json" \
   -d '{"team":"gcp","name":"expectimax-onnx-3"}'                       # token shown once
 curl -X POST "$BASE/bot/webhook" -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" -d "{\"url\":\"$URL\"}"          # secret shown once
+
+# Store the displayed webhook secret without putting it in shell history, and grant only the
+# bot's service identity access to it.
+gcloud secrets create "$SECRET_NAME" --replication-policy=automatic
+read -rsp "Webhook secret: " WEBHOOK_SECRET && echo
+printf '%s' "$WEBHOOK_SECRET" | gcloud secrets versions add "$SECRET_NAME" --data-file=-
+unset WEBHOOK_SECRET
+gcloud secrets add-iam-policy-binding "$SECRET_NAME" \
+  --member="serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
+  --role=roles/secretmanager.secretAccessor
+
 gcloud run services update dicechess-bot-gcp-onnx --region "$REGION" \
-  --update-env-vars DICECHESS_WEBHOOK_SECRET=<secret>
+  --update-secrets "DICECHESS_WEBHOOK_SECRET=${SECRET_NAME}:latest"
 curl -X POST "$BASE/bot/ladder/join" -H "Authorization: Bearer <token>"
 ```
 

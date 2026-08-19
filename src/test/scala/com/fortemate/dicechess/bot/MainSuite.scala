@@ -13,14 +13,8 @@ import com.fortemate.dicechess.runtime.{Signatures, WebhookHandler}
 class MainSuite extends munit.FunSuite:
 
   private val Secret         = "test-webhook-secret"
-  private val syntheticModel =
-    val tmp = java.nio.file.Files.createTempFile("synthetic_test_model", ".onnx")
-    tmp.toFile.deleteOnExit()
-    val in = getClass.getResourceAsStream("/synthetic_test_model.onnx")
-    try java.nio.file.Files.copy(in, tmp, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
-    finally in.close()
-    tmp.toString
-  private val initialNbk = FenParser.InitialPosition + " NBK"
+  private val syntheticModel = Strategy.syntheticModelPath()
+  private val initialNbk     = FenParser.InitialPosition + " NBK"
 
   test("end to end over real HTTP: a signed, clocked turn returns a path the engine considers legal"):
     val strategy =

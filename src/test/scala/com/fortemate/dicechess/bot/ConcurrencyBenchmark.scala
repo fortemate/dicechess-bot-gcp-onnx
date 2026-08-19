@@ -8,13 +8,7 @@ import scala.jdk.CollectionConverters.*
 
 object ConcurrencyBenchmark:
 
-  private val syntheticModel =
-    val tmp = java.nio.file.Files.createTempFile("synthetic_test_model", ".onnx")
-    tmp.toFile.deleteOnExit()
-    val in = getClass.getResourceAsStream("/synthetic_test_model.onnx")
-    try java.nio.file.Files.copy(in, tmp, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
-    finally in.close()
-    tmp.toString
+  private val syntheticModel = Strategy.syntheticModelPath()
 
   private val dfens = List(
     FenParser.InitialPosition + " NBK",
@@ -96,18 +90,19 @@ object ConcurrencyBenchmark:
         }
       }
 
-      val wallClockStart = System.currentTimeMillis()
+      val wallClockStart = System.nanoTime()
       val futures        = executor.invokeAll(tasks.asJava, 30, TimeUnit.SECONDS)
       for f <- futures.asScala do
         assert(!f.isCancelled, "task was cancelled due to timeout")
         f.get()
-      val totalWallClockMs = System.currentTimeMillis() - wallClockStart
+      val totalWallClockMs = (System.nanoTime() - wallClockStart) / 1_000_000L
 
       val sorted     = latencies.asScala.toList.sorted
       val p50        = sorted((sorted.size * 0.50).toInt)
       val p90        = sorted((sorted.size * 0.90).toInt)
-      val p99        = sorted((sorted.size * 0.99).toInt.min(sorted.size - 1))
-      val throughput = (totalRequests.toDouble / totalWallClockMs) * 1000.0
+      val p99        = sorted((sorted.size * 0.99).toInt)
+      val throughput =
+        if totalWallClockMs <= 0 then Double.NaN else (totalRequests.toDouble / totalWallClockMs) * 1000.0
 
       val statsList    = statsQueue.asScala.toList
       val avgCompleted =

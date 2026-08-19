@@ -10,14 +10,8 @@ import scala.jdk.CollectionConverters.*
   */
 class StrategySuite extends munit.FunSuite:
 
-  private val syntheticModel =
-    val tmp = java.nio.file.Files.createTempFile("synthetic_test_model", ".onnx")
-    tmp.toFile.deleteOnExit()
-    val in = getClass.getResourceAsStream("/synthetic_test_model.onnx")
-    try java.nio.file.Files.copy(in, tmp, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
-    finally in.close()
-    tmp.toString
-  private val initialNbk = FenParser.InitialPosition + " NBK"
+  private val syntheticModel = Strategy.syntheticModelPath()
+  private val initialNbk     = FenParser.InitialPosition + " NBK"
 
   private def withStrategy[A](f: Strategy => A): A =
     val s =
@@ -109,7 +103,7 @@ class StrategySuite extends munit.FunSuite:
       assertEquals(Strategy.loadOpeningBook(Some(path.toString)).size, 5)
     finally java.nio.file.Files.deleteIfExists(path)
 
-  test("concurrent chooseMoves calls across multiple threads return legal and independent results"):
+  test("concurrent chooseMoves calls across multiple threads return legal results"):
     withStrategy { s =>
       val testDfens = List(
         initialNbk,
@@ -118,7 +112,8 @@ class StrategySuite extends munit.FunSuite:
         "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1 BKP"
       )
 
-      val executor = java.util.concurrent.Executors.newFixedThreadPool(8)
+      val legalByDfen = testDfens.map(dfen => dfen -> legalPaths(dfen)).toMap
+      val executor    = java.util.concurrent.Executors.newFixedThreadPool(8)
       try
         val tasks = for
           i <- 0 until 32
@@ -133,7 +128,7 @@ class StrategySuite extends munit.FunSuite:
           assert(!future.isCancelled, "task was cancelled due to timeout")
           val (dfen, moves) = future.get()
           assert(moves.nonEmpty, s"legal moves expected for $dfen")
-          assert(legalPaths(dfen).contains(moves), s"$moves must be a legal path for $dfen")
+          assert(legalByDfen(dfen).contains(moves), s"$moves must be a legal path for $dfen")
       finally
         executor.shutdown()
         executor.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)

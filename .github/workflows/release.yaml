@@ -15,6 +15,11 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   create-release:
     runs-on: ubuntu-latest

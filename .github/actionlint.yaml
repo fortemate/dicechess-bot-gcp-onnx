@@ -1,0 +1,5 @@
+paths:
+  .github/workflows/release.yaml:
+    ignore:
+      # GitHub supports `concurrency.queue`, but actionlint 1.7.12's workflow schema predates it.
+      - 'unexpected key "queue" for "concurrency" section'

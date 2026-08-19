@@ -86,8 +86,9 @@ final class Strategy(
           case Some(remaining) if remaining > 0 =>
             timeManager.budgetMs(ClockState(remaining, incrementMillis, state.fullMoveNumber), overheadBufferMs)
           case _ => defaultThinkMs
-        val deadlineNanos = System.nanoTime() + budgetMs * 1_000_000L
-        val scored        = bot match
+        val boundedBudgetMs = budgetMs.max(1L).min(Strategy.MaxBudgetMs)
+        val deadlineNanos   = System.nanoTime() + boundedBudgetMs * 1_000_000L
+        val scored          = bot match
           case tb: TimeBudgetedSearch => tb.findBestMove(state, deadlineNanos, new Random())
           case other                  => other.findBestMove(state)
         scored.map(_.moves.map(Strategy.toUci)).getOrElse(Nil)
@@ -95,6 +96,9 @@ final class Strategy(
   def close(): Unit = onnx.close()
 
 object Strategy:
+
+  /** Operational ceiling for one move; also keeps millisecond-to-nanosecond deadline arithmetic safely bounded. */
+  private val MaxBudgetMs = 3_600_000L
 
   enum SearchMode(val id: String) derives CanEqual:
     case Expectimax extends SearchMode("expectimax")
@@ -138,7 +142,9 @@ object Strategy:
     * private data fails startup instead of silently weakening the bot.
     */
   private[bot] lazy val sampleBook: Map[String, String] =
-    val tsv = scala.util.Using(scala.io.Source.fromResource("opening_book.tsv"))(_.mkString).get
+    val tsv = scala.util
+      .Using(scala.io.Source.fromResource("opening_book.tsv")(using scala.io.Codec.UTF8))(_.mkString)
+      .get
     OpeningBookParser.parse(tsv) match
       case Right(entries) => entries
       case Left(error)    =>
@@ -149,7 +155,7 @@ object Strategy:
     case None        => sampleBook
     case Some(value) =>
       val tsv = scala.util
-        .Using(scala.io.Source.fromFile(value))(_.mkString)
+        .Using(scala.io.Source.fromFile(value)(using scala.io.Codec.UTF8))(_.mkString)
         .fold(
           cause => sys.error(s"failed to read opening book at '$value': ${cause.getMessage}"),
           identity
@@ -249,16 +255,17 @@ object Strategy:
     }
 
   /** Extract the bundled synthetic model to a temp file — ONNX Runtime loads from a filesystem path. */
-  private def syntheticModelPath(): String =
+  private[bot] def syntheticModelPath(): String =
+    val in = Option(getClass.getResourceAsStream("/synthetic_test_model.onnx"))
+      .getOrElse(sys.error("bundled synthetic ONNX model '/synthetic_test_model.onnx' is missing"))
     val tmp = Files.createTempFile("synthetic_test_model", ".onnx")
     tmp.toFile.deleteOnExit()
-    val in = getClass.getResourceAsStream("/synthetic_test_model.onnx")
     try Files.copy(in, tmp, StandardCopyOption.REPLACE_EXISTING)
     finally in.close()
     tmp.toString
 
   private def envLong(name: String, default: Long): Long =
-    sys.env.get(name).flatMap(_.toLongOption).getOrElse(default)
+    sys.env.get(name).flatMap(_.toLongOption).filter(value => value > 0 && value <= MaxBudgetMs).getOrElse(default)
 
   private def envInt(name: String, default: Int): Int =
     sys.env.get(name).flatMap(_.toIntOption).filter(_ > 0).getOrElse(default)

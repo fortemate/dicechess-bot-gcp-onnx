@@ -3,6 +3,7 @@ package com.fortemate.dicechess.bot
 import com.sun.net.httpserver.HttpServer
 import com.fortemate.dicechess.runtime.{CustomHandlerServer, TurnContext, WebhookHandler}
 
+import java.util.concurrent.CountDownLatch
 import java.util.function.Function as JFunction
 import scala.jdk.CollectionConverters.*
 
@@ -14,9 +15,12 @@ import scala.jdk.CollectionConverters.*
   *   - `DICECHESS_WEBHOOK_SECRET` — the per-bot signing key from webhook registration.
   *   - `MODEL_PATH` — path to the mounted ONNX value model (e.g. `/models/oracle-3.onnx`). Unset → the bundled
   *     synthetic model (boots + plays legal, signal-free moves).
+  *   - `OPENING_BOOK_PATH` — path to an external TSV opening book. Unset → the bundled five-entry sample.
   *   - `ORACLE_FEATURES` — feature extractor the model was trained on: `rich` (default; oracle-3), `material`, or
   *     `kcp`.
   *   - `ORACLE_CANDIDATE_LIMIT` — expectimax candidate width (default: the engine's own).
+  *   - `RESCORE_MODEL_PATH` — optional KCP model that rescores expectimax root candidates.
+  *   - `RESCORE_WEIGHT` — root-rescore blend weight in `(0, 1]` (default `0.5`).
   *   - `SEARCH_MODE` — `expectimax` (default) or `one-ply`.
   *   - `TIME_POLICY` — `empirical-v1` (default) or `legacy-linear-v1`.
   *   - `OVERHEAD_BUFFER_MS` (default `300`), `DEFAULT_THINK_MS` (default `2000`, untimed games).
@@ -34,8 +38,17 @@ object Main:
       System.err.println("[bot] DICECHESS_WEBHOOK_SECRET is not set — only the verification handshake will succeed")
     val strategy = Strategy.fromEnvironment // builds and warms the ONNX session at startup
     val server   = CustomHandlerServer.start(resolvePort, WebhookPath, new WebhookHandler(secret, adapt(strategy)))
+    val stopped  = new CountDownLatch(1)
+    val hook     = new Thread(() => stopGracefully(server, strategy, stopped), "dicechess-bot-shutdown")
+    Runtime.getRuntime.addShutdownHook(hook)
     println(s"[bot] ONNX custom handler listening on :${server.getAddress.getPort}$WebhookPath")
-    Thread.currentThread().join()
+    stopped.await()
+
+  private def stopGracefully(server: HttpServer, strategy: Strategy, stopped: CountDownLatch): Unit =
+    try server.stop(5)
+    finally
+      try strategy.close()
+      finally stopped.countDown()
 
   /** Cloud Run injects `PORT` (default 8080); fall back to Azure's var, then 8080. */
   private def resolvePort: Int =
