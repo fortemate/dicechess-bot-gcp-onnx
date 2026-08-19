@@ -1,0 +1,30 @@
+# PR labels mapped to the release-note categories in .github/release.yml.
+
+enhancement:
+  - head-branch: ['^task/', '^feat/', '^feature/']
+bug:
+  - head-branch: ['^bug/', '^fix/']
+refactoring:
+  - head-branch: ['^refactor/']
+performance:
+  - head-branch: ['^perf/']
+
+documentation:
+  - head-branch: ['^docs/']
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'README.md'
+ci-cd:
+  - head-branch: ['^ci/']
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/**'
+          - 'Dockerfile'
+          - '.dockerignore'
+          - 'mise.toml'
+          - 'lefthook.yml'
+testing:
+  - head-branch: ['^test/']
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/test/**'

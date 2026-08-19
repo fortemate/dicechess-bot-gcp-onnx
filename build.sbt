@@ -43,7 +43,7 @@ lazy val root = (project in file("."))
     name                := "dicechess-bot-gcp-onnx",
     publish / skip      := true,
     Test / exportJars   := false,
-    Compile / mainClass := Some("dicechess.bot.Main"),
+    Compile / mainClass := Some("com.fortemate.dicechess.bot.Main"),
     semanticdbEnabled   := true,
     semanticdbVersion   := scalafixSemanticdb.revision,
     scalacOptions ++= Seq(
@@ -74,7 +74,7 @@ lazy val root = (project in file("."))
           ()
         }
     }.value,
-    assembly / mainClass             := Some("dicechess.bot.Main"),
+    assembly / mainClass             := Some("com.fortemate.dicechess.bot.Main"),
     assembly / assemblyJarName       := "dicechess-bot-gcp-onnx.jar",
     assembly / assemblyOutputPath    := target.value / "dicechess-bot-gcp-onnx.jar",
     assembly / assemblyMergeStrategy := {
