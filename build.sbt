@@ -30,23 +30,8 @@ ThisBuild / developers := List(
   )
 )
 
-// The Java webhook runtime remains on GitHub Packages until it is migrated separately.
-ThisBuild / resolvers += "GitHub Packages (dicechess-bot-runtime)" at
-  "https://maven.pkg.github.com/rabestro/dicechess-bot-runtime"
-
-def ghValue(envVar: String, ghArgs: String*): Option[String] =
-  sys.env
-    .get(envVar)
-    .filter(_.nonEmpty)
-    .orElse(scala.util.Try(scala.sys.process.Process("gh" +: ghArgs).!!.trim).toOption)
-    .filter(_.nonEmpty)
-
-ThisBuild / credentials ++= (for {
-  token <- ghValue("GITHUB_TOKEN", "auth", "token")
-  user = sys.env.get("GITHUB_ACTOR").filter(_.nonEmpty).getOrElse("git")
-} yield Credentials("GitHub Package Registry", "maven.pkg.github.com", user, token)).toSeq
-
-val DiceChessEngineVersion     = "0.3.0"
+// Both Fortemate libraries are public Maven Central artifacts; no repository credentials are required.
+val DiceChessEngineVersion     = "0.4.0"
 val DiceChessBotRuntimeVersion = "1.0.0"
 val CirceVersion               = "0.14.16"
 val MunitVersion               = "1.3.5"
@@ -72,7 +57,7 @@ lazy val root = (project in file("."))
     ),
     libraryDependencies ++= Seq(
       "com.fortemate" %% "dicechess-engine"      % DiceChessEngineVersion,
-      "lv.id.jc"       % "dicechess-bot-runtime" % DiceChessBotRuntimeVersion,
+      "com.fortemate"  % "dicechess-bot-runtime" % DiceChessBotRuntimeVersion,
       "io.circe"      %% "circe-parser"          % CirceVersion % Test,
       "org.scalameta" %% "munit"                 % MunitVersion % Test
     ),
