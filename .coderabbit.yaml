@@ -1,0 +1,46 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+language: en-US
+
+reviews:
+  profile: assertive
+  high_level_summary: false
+  poem: false
+  collapse_walkthrough: true
+
+  auto_review:
+    enabled: false
+    drafts: false
+    base_branches:
+      - main
+
+  path_filters:
+    - "!**/target/**"
+    - "!**/project/target/**"
+    - "!models/**"
+    - "!**/*.onnx"
+
+  tools:
+    actionlint:
+      enabled: true
+    gitleaks:
+      enabled: true
+    shellcheck:
+      enabled: true
+
+  path_instructions:
+    - path: "**/*.scala"
+      instructions: |
+        This project uses Scala 3 with explicit nulls, strict equality, and fatal warnings.
+        Check resource ownership for ONNX Runtime values, avoid allocations in search paths,
+        and keep comments focused on why rather than what.
+
+    - path: ".github/workflows/**"
+      instructions: |
+        Require pinned action commit SHAs, least-privilege permissions, Java 25, and sbt 2
+        command syntax with multi-step command lists passed as one quoted argument.
+
+    - path: "build.sbt"
+      instructions: |
+        Keep Fortemate metadata, Scala and plugin versions, Maven coordinates, compiler flags,
+        assembly settings, and GitHub Packages authentication consistent.

@@ -1,0 +1,14 @@
+# Runtime-only image: build the fat jar before the Docker image and send only that artifact
+# as the build context. Trained ONNX models are runtime inputs and never enter the image.
+*
+!target/
+target/*
+!target/out/
+target/out/*
+!target/out/jvm/
+target/out/jvm/*
+!target/out/jvm/scala-3.8.4/
+target/out/jvm/scala-3.8.4/*
+!target/out/jvm/scala-3.8.4/dicechess-bot-gcp-onnx/
+target/out/jvm/scala-3.8.4/dicechess-bot-gcp-onnx/*
+!target/out/jvm/scala-3.8.4/dicechess-bot-gcp-onnx/dicechess-bot-gcp-onnx.jar

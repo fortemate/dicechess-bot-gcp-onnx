@@ -1,0 +1,31 @@
+*.class
+*.tasty
+*.log
+
+# Virtual machine crash logs
+hs_err_pid*
+/.bsp/sbt.json
+
+# Scala / sbt
+target/
+project/target/
+project/project/
+.history/
+.scala-build/
+.sbt/
+
+# IDEs and operating systems
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Local secrets and machine-specific configuration
+.env
+.env.*
+!.env.example
+mise.local.toml
+
+# Trained ONNX models are runtime inputs, never repository content.
+/models/
+oracle-*.onnx

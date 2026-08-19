@@ -1,0 +1,28 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "08:00"
+    open-pull-requests-limit: 5
+    assignees:
+      - "rabestro"
+    commit-message:
+      prefix: "chore"
+
+  - package-ecosystem: "sbt"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "friday"
+      time: "08:00"
+    open-pull-requests-limit: 5
+    assignees:
+      - "rabestro"
+    commit-message:
+      prefix: "chore"
+    ignore:
+      - dependency-name: "org.scala-sbt:sbt"
+        update-types: ["version-update:semver-major"]
