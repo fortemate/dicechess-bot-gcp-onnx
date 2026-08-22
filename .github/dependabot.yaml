@@ -9,6 +9,8 @@ updates:
     open-pull-requests-limit: 5
     assignees:
       - "rabestro"
+    labels:
+      - "ci-cd"
     commit-message:
       prefix: "chore"
 
@@ -21,6 +23,9 @@ updates:
     open-pull-requests-limit: 5
     assignees:
       - "rabestro"
+    labels:
+      - "dependencies"
+      - "ci-cd"
     commit-message:
       prefix: "chore"
     ignore:
