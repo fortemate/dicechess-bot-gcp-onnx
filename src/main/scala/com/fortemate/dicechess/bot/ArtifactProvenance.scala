@@ -5,7 +5,7 @@ import java.security.MessageDigest
 import java.util.HexFormat
 import java.io.InputStream
 
-private[bot] final case class ArtifactProvenance(id: String, sha256: String)
+final private[bot] case class ArtifactProvenance(id: String, sha256: String)
 
 private[bot] object ArtifactProvenance:
 
@@ -27,7 +27,7 @@ private[bot] object ArtifactProvenance:
 
   def inspectResource(resourceName: String, id: String): ArtifactProvenance =
     val resourcePath = "/" + resourceName.stripPrefix("/")
-    val input = Option(getClass.getResourceAsStream(resourcePath))
+    val input        = Option(getClass.getResourceAsStream(resourcePath))
       .getOrElse(sys.error(s"bundled artifact '$resourcePath' is missing"))
     val actual = try digest(input)
     finally input.close()

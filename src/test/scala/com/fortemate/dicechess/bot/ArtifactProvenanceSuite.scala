@@ -18,7 +18,7 @@ class ArtifactProvenanceSuite extends munit.FunSuite:
     try
       Files.writeString(path, "dicechess")
       val expected = "0" * 64
-      val error = intercept[RuntimeException] {
+      val error    = intercept[RuntimeException] {
         ArtifactProvenance.inspect(path.toString, Some(expected), None)
       }
       assert(error.getMessage.startsWith(s"SHA-256 mismatch for '${path.toString}'"))
