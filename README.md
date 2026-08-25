@@ -9,6 +9,14 @@ A Dice Chess webhook bot in **Scala 3** that links the official engine and runs 
 2-ply expectimax** (`OnnxExpectimaxSearch`) behind an exported **opening book**, on the JVM in a
 container suitable for **Google Cloud Run**.
 
+The named `hybrid-star2-v1` profile combines model pre-ranking, Star1/Star2 chance-node pruning, a
+bounded transposition table, and a KCP root rescorer. It is deliberately fail-closed: engine 0.5.0 is
+rejected because root rescoring prevents useful Star cutoffs in that release
+([engine#87](https://github.com/fortemate/dicechess-engine/issues/87)). The profile becomes runnable
+only after this wrapper pins the reviewed patch release. One search instance is single-writer; safe
+throughput scaling comes from independent container replicas, each with its own ONNX sessions and
+table.
+
 The same image can instead run the model as a direct one-ply evaluator (`OnnxEvalSearch`) and can be
 hosted by any container platform with a public HTTPS endpoint, including Northflank. Search mode and
 time allocation policy are selected independently per deployment, so two bot identities can compare
@@ -36,14 +44,24 @@ so the budget **widens the candidate set** (and prevents flagging) rather than d
 
 | Env var | Default | Meaning |
 | --- | --- | --- |
+| `DICECHESS_WEBHOOK_SECRET` | *(required)* | Per-bot webhook signing secret. Empty or absent values fail startup. |
+| `BOT_PROFILE` | `legacy` | `legacy` preserves independent env configuration; `hybrid-star2-v1` atomically requires the documented production search, artifacts, identity, and immutable provenance. |
 | `MODEL_PATH` | *(synthetic)* | Path to the mounted ONNX value model, e.g. `/models/oracle-3.onnx`. |
 | `OPENING_BOOK_PATH` | bundled 5-entry sample | Path to a privately mounted TSV opening book, e.g. `/models/opening_book.tsv`. |
 | `ORACLE_FEATURES` | `rich` | Feature extractor the model was trained on: `material` (7), `rich` (9), `kcp` (13). |
 | `SEARCH_MODE` | `expectimax` | `expectimax` for 2-ply search or `one-ply` for direct model evaluation. |
 | `TIME_POLICY` | `empirical-v1` | `empirical-v1` (production Dice Chess data) or `legacy-linear-v1`. |
 | `ORACLE_CANDIDATE_LIMIT` | engine default | Expectimax candidate width. |
+| `PRE_RANK_WITH_MODEL` | `false` | Expectimax only: reuse the leaf model to pre-rank root candidates. |
+| `TT_ENABLED` | `false` | Expectimax only: enable one transposition table owned by this Strategy. |
+| `TT_CAPACITY` | `262144` | Positive power-of-two table capacity, capped at 4,194,304; size for the container memory limit. |
 | `RESCORE_MODEL_PATH` | *(off)* | Expectimax only (`SEARCH_MODE=expectimax`): second ONNX model (always KCP, 13 features) that rescores the root candidates — see below. |
 | `RESCORE_WEIGHT` | `0.5` | Expectimax only (`SEARCH_MODE=expectimax`): root-rescore blend weight in `(0, 1]`; `final = (1-w)·search + w·rescore`. |
+| `MODEL_SHA256` | *(unchecked)* | Expected SHA-256 for `MODEL_PATH`; mismatch fails startup. |
+| `RESCORE_MODEL_SHA256` | *(unchecked)* | Expected SHA-256 for `RESCORE_MODEL_PATH`; mismatch fails startup. |
+| `OPENING_BOOK_SHA256` | *(unchecked)* | Expected SHA-256 for `OPENING_BOOK_PATH`; mismatch fails startup. |
+| `MODEL_ID`, `RESCORE_MODEL_ID`, `OPENING_BOOK_ID` | filename | Stable artifact identifiers included in startup telemetry. |
+| `BOT_IDENTITY`, `BOT_WRAPPER_VERSION`, `SOURCE_REVISION`, `IMAGE_DIGEST` | deployment values | Non-secret identity and immutable build provenance included in startup telemetry. |
 | `OVERHEAD_BUFFER_MS` | `300` | Slack for the play-api↔bot round-trip + one uninterruptible inference. |
 | `DEFAULT_THINK_MS` | `2000` | Per-turn deadline for an untimed game. |
 
@@ -61,7 +79,7 @@ enable it; a candidate that loses the king outright on some roll is never rescue
 
 ## Licensing
 
-**AGPL-3.0**, because it links the AGPL engine. The trained model and production opening book are
+**AGPL-3.0-only**, because it links the AGPL engine. The trained model and production opening book are
 **data**, not derivatives of the code — so keeping them private is compatible with the AGPL code. A
 fork without private assets runs the bundled synthetic model and five-entry book sample.
 
@@ -69,11 +87,12 @@ fork without private assets runs the bundled synthetic model and five-entry book
 
 | Path | Role |
 | --- | --- |
-| `src/main/scala/com/fortemate/dicechess/bot/Strategy.scala` | Configured ONNX search wrapped by `OpeningBookBot`, clock → `TimeManager` deadline; thread-safe concurrent ONNX session. |
+| `src/main/scala/com/fortemate/dicechess/bot/Strategy.scala` | Configured ONNX search wrapped by `OpeningBookBot`, clock → `TimeManager` deadline; serialized single-writer search with optional TT. |
+| `src/main/scala/com/fortemate/dicechess/bot/ArtifactProvenance.scala` | Streams SHA-256 verification for mounted models/books and fails closed on a mismatch. |
 | `src/main/scala/com/fortemate/dicechess/bot/Main.scala` | Wires `Strategy` into [`dicechess-bot-runtime`](https://github.com/fortemate/dicechess-bot-runtime)'s `WebhookHandler`/`CustomHandlerServer`; binds the platform's `$PORT`. |
 | `src/main/resources/opening_book.tsv` | Five public example entries in the engine's TSV format; production uses `OPENING_BOOK_PATH`. |
 | `src/main/resources/synthetic_test_model.onnx` | Open, signal-free fallback model — so the bot runs with no `MODEL_PATH`. |
-| `Dockerfile` | Runtime-only public image (`eclipse-temurin:25-jre-noble`); trained weights are provided privately at deployment. |
+| `Dockerfile` | Multi-stage, non-root public image on `eclipse-temurin:25-jre-noble`; trained weights are provided privately at deployment. |
 
 ## Local development
 
@@ -85,18 +104,22 @@ toolchain and Git hooks:
 mise install
 mise run setup
 mise run check    # uses the bundled synthetic model — no external model needed
-mise run run      # serves on :8080 with the synthetic model
+DICECHESS_WEBHOOK_SECRET=dev-secret mise run run  # serves on :8080 with the synthetic model
 ```
 
 ## Deploy to Cloud Run
 
 Each release publishes a multi-architecture image to GitHub Container Registry at
-`ghcr.io/fortemate/dicechess-bot-gcp-onnx`. Prefer an immutable version tag in production; `latest`
-tracks the most recent release.
+`ghcr.io/fortemate/dicechess-bot-gcp-onnx`. Pin the published image by digest in production;
+`latest` is useful only for discovery and tracks the most recent release.
 
 ```bash
 REGION=us-central1
-IMAGE=ghcr.io/fortemate/dicechess-bot-gcp-onnx:latest
+IMAGE=ghcr.io/fortemate/dicechess-bot-gcp-onnx@sha256:<published-multi-arch-index-digest>
+BOT_IDENTITY=dexus/atlas-1
+MODEL_SHA256=<64-hex-rich-model-digest>
+RESCORE_MODEL_SHA256=<64-hex-kcp-model-digest>
+OPENING_BOOK_SHA256=<64-hex-opening-book-digest>
 PROJECT_ID=$(gcloud config get-value project)
 BUCKET=your-private-bucket
 SERVICE_ACCOUNT_NAME=dicechess-bot-gcp-onnx
@@ -115,49 +138,70 @@ gcloud storage cp oracle-3.onnx "gs://$BUCKET/oracle-3.onnx"
 gcloud storage cp kcp_nodice.onnx "gs://$BUCKET/kcp_nodice.onnx"
 gcloud storage cp opening_book.tsv "gs://$BUCKET/opening_book.tsv"
 
-# 3. Deploy with the model mounted read-only + selected via env. Concurrent requests can be served
-#    by one container (ONNX session inference is thread-safe; --concurrency 8 matches tested capacity).
-#    Scale-to-zero avoids idle instances.
+# 3. Create a non-empty bootstrap secret before the first deployment. The verification handshake is
+#    unsigned, but the process itself always fails closed without a signing key. Replace this secret
+#    with the server-issued value before joining the ladder.
+openssl rand -hex 32 | gcloud secrets create "$SECRET_NAME" \
+  --replication-policy=automatic --data-file=-
+gcloud secrets add-iam-policy-binding "$SECRET_NAME" \
+  --member="serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
+  --role=roles/secretmanager.secretAccessor
+
+# 4. Deploy with the model mounted read-only + selected via env. One Strategy serializes search, so
+#    keep per-instance concurrency at 1 and scale with independent replicas. Scale-to-zero avoids idle instances.
+#    Verify all three local files with sha256sum before using their expected values below. This profile
+#    intentionally refuses to start until the image contains the engine#87 patch release.
 gcloud run deploy dicechess-bot-gcp-onnx \
   --image "$IMAGE" --region "$REGION" \
   --service-account "$SERVICE_ACCOUNT_EMAIL" \
-  --allow-unauthenticated --cpu 1 --memory 1Gi --min-instances 0 --concurrency 8 \
+  --allow-unauthenticated --cpu 1 --memory 1Gi --min-instances 0 --concurrency 1 \
   --add-volume=name=models,type=cloud-storage,bucket="$BUCKET",readonly=true,mount-options="uid=10001;gid=10001" \
   --add-volume-mount=volume=models,mount-path=/models \
-  --set-env-vars MODEL_PATH=/models/oracle-3.onnx,OPENING_BOOK_PATH=/models/opening_book.tsv,ORACLE_FEATURES=rich,RESCORE_MODEL_PATH=/models/kcp_nodice.onnx
+  --set-secrets "DICECHESS_WEBHOOK_SECRET=${SECRET_NAME}:latest" \
+  --set-env-vars BOT_PROFILE=hybrid-star2-v1,BOT_IDENTITY="$BOT_IDENTITY",IMAGE_DIGEST="${IMAGE#*@}",MODEL_PATH=/models/oracle-3.onnx,MODEL_ID=oracle-3,MODEL_SHA256="$MODEL_SHA256",OPENING_BOOK_PATH=/models/opening_book.tsv,OPENING_BOOK_ID=opening-book,OPENING_BOOK_SHA256="$OPENING_BOOK_SHA256",SEARCH_MODE=expectimax,ORACLE_FEATURES=rich,ORACLE_CANDIDATE_LIMIT=8,PRE_RANK_WITH_MODEL=true,TT_ENABLED=true,TT_CAPACITY=262144,RESCORE_MODEL_PATH=/models/kcp_nodice.onnx,RESCORE_MODEL_ID=kcp-nodice,RESCORE_MODEL_SHA256="$RESCORE_MODEL_SHA256",RESCORE_WEIGHT=0.5,TIME_POLICY=empirical-v1,OVERHEAD_BUFFER_MS=1000,DEFAULT_THINK_MS=2000
 ```
 
-To build and run a local container image instead:
+To build a local container image instead (the multi-stage build runs sbt itself):
 
 ```bash
-mise run assembly
 docker build -t dicechess-bot-gcp-onnx:local .
 ```
 
 Then register the bot (any HTTP client; `curl` shown), using the printed service URL:
 
 ```bash
-BASE=https://play-api.fortemate.com
+set -euo pipefail
+set +x # never echo one-time credentials, even if tracing was enabled earlier
+BASE=https://api.fortemate.com
 URL=https://<the-cloud-run-url>/api/webhook
+BOT_TEAM=${BOT_IDENTITY%%/*}
+BOT_NAME=${BOT_IDENTITY#*/}
 
-curl -X POST "$BASE/bot/register" -H "Content-Type: application/json" \
-  -d '{"team":"gcp","name":"expectimax-onnx-3"}'                       # token shown once
-curl -X POST "$BASE/bot/webhook" -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" -d "{\"url\":\"$URL\"}"          # secret shown once
+REGISTER_RESPONSE=$(curl --fail-with-body --silent --show-error \
+  --request POST "$BASE/bot/register" --header "Content-Type: application/json" \
+  --data "$(jq -cn --arg team "$BOT_TEAM" --arg name "$BOT_NAME" '{team: $team, name: $name}')")
+BOT_TOKEN=$(printf '%s' "$REGISTER_RESPONSE" | jq -er '.token | select(type == "string" and length > 0)')
+unset REGISTER_RESPONSE
 
-# Store the displayed webhook secret without putting it in shell history, and grant only the
-# bot's service identity access to it.
-gcloud secrets create "$SECRET_NAME" --replication-policy=automatic
-read -rsp "Webhook secret: " WEBHOOK_SECRET && echo
+# Supplying the bearer header through a file descriptor keeps the one-time token out of process arguments.
+WEBHOOK_RESPONSE=$(curl --fail-with-body --silent --show-error \
+  --request POST "$BASE/bot/webhook" \
+  --header @<(printf 'Authorization: Bearer %s\n' "$BOT_TOKEN") \
+  --header "Content-Type: application/json" \
+  --data "$(jq -cn --arg url "$URL" '{url: $url}')")
+WEBHOOK_SECRET=$(printf '%s' "$WEBHOOK_RESPONSE" | jq -er '.secret | select(type == "string" and length > 0)')
+unset WEBHOOK_RESPONSE
+
+# Store the one-time webhook secret without printing it or putting it in process arguments. Adding
+# a new version replaces the bootstrap value without changing the secret binding.
 printf '%s' "$WEBHOOK_SECRET" | gcloud secrets versions add "$SECRET_NAME" --data-file=-
 unset WEBHOOK_SECRET
-gcloud secrets add-iam-policy-binding "$SECRET_NAME" \
-  --member="serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
-  --role=roles/secretmanager.secretAccessor
 
 gcloud run services update dicechess-bot-gcp-onnx --region "$REGION" \
   --update-secrets "DICECHESS_WEBHOOK_SECRET=${SECRET_NAME}:latest"
-curl -X POST "$BASE/bot/ladder/join" -H "Authorization: Bearer <token>"
+curl --fail-with-body --silent --show-error --request POST "$BASE/bot/ladder/join" \
+  --header @<(printf 'Authorization: Bearer %s\n' "$BOT_TOKEN")
+unset BOT_TOKEN
 ```
 
 Full platform reference: <https://fortemate.github.io/dicechess-bot-runtime/>. Review the current
