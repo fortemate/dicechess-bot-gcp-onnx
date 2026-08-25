@@ -142,6 +142,23 @@ object Strategy:
 
     val available: List[SearchProfile] = values.toList
 
+  final private[bot] case class StartupProvenance(
+      profile: SearchProfile,
+      model: ArtifactProvenance,
+      rescore: Option[ArtifactProvenance],
+      book: Option[ArtifactProvenance],
+      searchMode: SearchMode,
+      features: String,
+      candidateLimit: Int,
+      preRankWithModel: Boolean,
+      ttEnabled: Boolean,
+      ttCapacity: Int,
+      rescoreWeight: Option[Double],
+      timePolicy: String,
+      overheadMs: Long,
+      defaultThinkMs: Long
+  )
+
   /** UCI for a search-layer `Move` — the same recipe play-api's `EngineOps` uses. */
   def toUci(move: Move): String =
     move.fromSquare.toNotation + move.toSquare.toNotation +
@@ -293,20 +310,22 @@ object Strategy:
           tt = tt
         )
         logStartupProvenance(
-          profile,
-          modelArtifact,
-          rescoreArtifact,
-          bookArtifact,
-          searchMode,
-          features,
-          candidateLimit,
-          preRankModel,
-          ttEnabled,
-          ttCapacity,
-          rescore.map(_.weight),
-          timePolicy.id,
-          overheadMs,
-          defaultThink
+          StartupProvenance(
+            profile = profile,
+            model = modelArtifact,
+            rescore = rescoreArtifact,
+            book = bookArtifact,
+            searchMode = searchMode,
+            features = features,
+            candidateLimit = candidateLimit,
+            preRankWithModel = preRankModel,
+            ttEnabled = ttEnabled,
+            ttCapacity = ttCapacity,
+            rescoreWeight = rescore.map(_.weight),
+            timePolicy = timePolicy.id,
+            overheadMs = overheadMs,
+            defaultThinkMs = defaultThink
+          )
         )
         strategy
       case None =>
@@ -332,20 +351,22 @@ object Strategy:
           tt = tt
         )
         logStartupProvenance(
-          profile,
-          modelArtifact,
-          None,
-          bookArtifact,
-          searchMode,
-          "material",
-          candidateLimit,
-          preRankModel,
-          ttEnabled,
-          ttCapacity,
-          None,
-          timePolicy.id,
-          overheadMs,
-          defaultThink
+          StartupProvenance(
+            profile = profile,
+            model = modelArtifact,
+            rescore = None,
+            book = bookArtifact,
+            searchMode = searchMode,
+            features = "material",
+            candidateLimit = candidateLimit,
+            preRankWithModel = preRankModel,
+            ttEnabled = ttEnabled,
+            ttCapacity = ttCapacity,
+            rescoreWeight = None,
+            timePolicy = timePolicy.id,
+            overheadMs = overheadMs,
+            defaultThinkMs = defaultThink
+          )
         )
         strategy
 
@@ -369,72 +390,96 @@ object Strategy:
   private[bot] def validateProfile(profile: SearchProfile, env: Map[String, String], engineVersion: String): Unit =
     profile match
       case SearchProfile.Legacy        => ()
-      case SearchProfile.HybridStar2V1 =>
-        val required = List(
-          "BOT_IDENTITY",
-          "BOT_WRAPPER_VERSION",
-          "SOURCE_REVISION",
-          "IMAGE_DIGEST",
-          "MODEL_PATH",
-          "MODEL_ID",
-          "MODEL_SHA256",
-          "RESCORE_MODEL_PATH",
-          "RESCORE_MODEL_ID",
-          "RESCORE_MODEL_SHA256",
-          "OPENING_BOOK_PATH",
-          "OPENING_BOOK_ID",
-          "OPENING_BOOK_SHA256",
-          "SEARCH_MODE",
-          "ORACLE_FEATURES",
-          "ORACLE_CANDIDATE_LIMIT",
-          "PRE_RANK_WITH_MODEL",
-          "TT_ENABLED",
-          "TT_CAPACITY",
-          "RESCORE_WEIGHT",
-          "TIME_POLICY",
-          "OVERHEAD_BUFFER_MS",
-          "DEFAULT_THINK_MS"
-        )
-        val missing = required.filter(name => env.get(name).forall(_.trim.isEmpty))
-        if missing.nonEmpty then sys.error(s"BOT_PROFILE=${profile.id} requires non-empty ${missing.mkString(", ")}")
-        if !supportsHybridStarPruning(engineVersion) then
-          sys.error(
-            s"BOT_PROFILE=${profile.id} requires a root-rescore-aware engine >= 0.5.1; found '$engineVersion'"
-          )
-        def requireValue(name: String, expected: String): Unit =
-          val actual = env(name)
-          if !actual.equalsIgnoreCase(expected) then
-            sys.error(s"BOT_PROFILE=${profile.id} requires $name=$expected; found '$actual'")
-        requireValue("SEARCH_MODE", SearchMode.Expectimax.id)
-        requireValue("ORACLE_FEATURES", "rich")
-        requireValue("PRE_RANK_WITH_MODEL", "true")
-        requireValue("TT_ENABLED", "true")
-        requireValue("TIME_POLICY", TimePolicies.EmpiricalV1.id)
-        val Identity = raw"^[a-z0-9][a-z0-9-]{0,31}/[a-z0-9][a-z0-9-]{0,31}$$".r
-        if !Identity.matches(env("BOT_IDENTITY")) then
-          sys.error(
-            s"BOT_PROFILE=${profile.id} requires BOT_IDENTITY as lowercase team/name slugs of at most 32 characters"
-          )
-        val Digest = raw"^(?:sha256:)?[0-9a-fA-F]{64}$$".r
-        if !Digest.matches(env("IMAGE_DIGEST")) then
-          sys.error(s"BOT_PROFILE=${profile.id} requires IMAGE_DIGEST as an immutable SHA-256 digest")
-        val Revision = raw"^[0-9a-fA-F]{40}$$".r
-        if !Revision.matches(env("SOURCE_REVISION")) then
-          sys.error(s"BOT_PROFILE=${profile.id} requires SOURCE_REVISION as a full Git commit SHA")
-        val WrapperVersion = raw"^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$$".r
-        if !WrapperVersion.matches(env("BOT_WRAPPER_VERSION")) then
-          sys.error(s"BOT_PROFILE=${profile.id} requires BOT_WRAPPER_VERSION in canonical vX.Y.Z form")
-        env("RESCORE_WEIGHT").toDoubleOption match
-          case Some(weight) if weight == 0.5 => ()
-          case _                             => sys.error(s"BOT_PROFILE=${profile.id} requires RESCORE_WEIGHT=0.5")
-        val _ = env("ORACLE_CANDIDATE_LIMIT").toIntOption
-          .filter(value => value > 0 && value <= MaxCandidateLimit)
-          .getOrElse(
-            sys.error(
-              s"BOT_PROFILE=${profile.id} requires ORACLE_CANDIDATE_LIMIT in [1, $MaxCandidateLimit]"
-            )
-          )
-        val _ = parseTtCapacity(env.get("TT_CAPACITY"))
+      case SearchProfile.HybridStar2V1 => validateHybridProfile(profile, env, engineVersion)
+
+  private val HybridRequiredConfiguration = List(
+    "BOT_IDENTITY",
+    "BOT_WRAPPER_VERSION",
+    "SOURCE_REVISION",
+    "IMAGE_DIGEST",
+    "MODEL_PATH",
+    "MODEL_ID",
+    "MODEL_SHA256",
+    "RESCORE_MODEL_PATH",
+    "RESCORE_MODEL_ID",
+    "RESCORE_MODEL_SHA256",
+    "OPENING_BOOK_PATH",
+    "OPENING_BOOK_ID",
+    "OPENING_BOOK_SHA256",
+    "SEARCH_MODE",
+    "ORACLE_FEATURES",
+    "ORACLE_CANDIDATE_LIMIT",
+    "PRE_RANK_WITH_MODEL",
+    "TT_ENABLED",
+    "TT_CAPACITY",
+    "RESCORE_WEIGHT",
+    "TIME_POLICY",
+    "OVERHEAD_BUFFER_MS",
+    "DEFAULT_THINK_MS"
+  )
+
+  private def validateHybridProfile(
+      profile: SearchProfile,
+      env: Map[String, String],
+      engineVersion: String
+  ): Unit =
+    requireHybridConfiguration(profile, env)
+    requireHybridEngine(profile, engineVersion)
+    requireHybridExactValues(profile, env)
+    requireHybridProvenanceFormats(profile, env)
+    requireHybridNumerics(profile, env)
+
+  private def requireHybridConfiguration(profile: SearchProfile, env: Map[String, String]): Unit =
+    val missing = HybridRequiredConfiguration.filter(name => env.get(name).forall(_.trim.isEmpty))
+    if missing.nonEmpty then sys.error(s"BOT_PROFILE=${profile.id} requires non-empty ${missing.mkString(", ")}")
+
+  private def requireHybridEngine(profile: SearchProfile, engineVersion: String): Unit =
+    if !supportsHybridStarPruning(engineVersion) then
+      sys.error(s"BOT_PROFILE=${profile.id} requires a root-rescore-aware engine >= 0.5.1; found '$engineVersion'")
+
+  private def requireHybridExactValues(profile: SearchProfile, env: Map[String, String]): Unit =
+    requireHybridValue(profile, env, "SEARCH_MODE", SearchMode.Expectimax.id)
+    requireHybridValue(profile, env, "ORACLE_FEATURES", "rich")
+    requireHybridValue(profile, env, "PRE_RANK_WITH_MODEL", "true")
+    requireHybridValue(profile, env, "TT_ENABLED", "true")
+    requireHybridValue(profile, env, "TIME_POLICY", TimePolicies.EmpiricalV1.id)
+
+  private def requireHybridValue(
+      profile: SearchProfile,
+      env: Map[String, String],
+      name: String,
+      expected: String
+  ): Unit =
+    val actual = env(name)
+    if !actual.equalsIgnoreCase(expected) then
+      sys.error(s"BOT_PROFILE=${profile.id} requires $name=$expected; found '$actual'")
+
+  private def requireHybridProvenanceFormats(profile: SearchProfile, env: Map[String, String]): Unit =
+    val identityPattern = raw"^[a-z0-9][a-z0-9-]{0,31}/[a-z0-9][a-z0-9-]{0,31}$$".r
+    if !identityPattern.matches(env("BOT_IDENTITY")) then
+      sys.error(
+        s"BOT_PROFILE=${profile.id} requires BOT_IDENTITY as lowercase team/name slugs of at most 32 characters"
+      )
+    val digestPattern = raw"^(?:sha256:)?[0-9a-fA-F]{64}$$".r
+    if !digestPattern.matches(env("IMAGE_DIGEST")) then
+      sys.error(s"BOT_PROFILE=${profile.id} requires IMAGE_DIGEST as an immutable SHA-256 digest")
+    val revisionPattern = raw"^[0-9a-fA-F]{40}$$".r
+    if !revisionPattern.matches(env("SOURCE_REVISION")) then
+      sys.error(s"BOT_PROFILE=${profile.id} requires SOURCE_REVISION as a full Git commit SHA")
+    val wrapperVersionPattern = raw"^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$$".r
+    if !wrapperVersionPattern.matches(env("BOT_WRAPPER_VERSION")) then
+      sys.error(s"BOT_PROFILE=${profile.id} requires BOT_WRAPPER_VERSION in canonical vX.Y.Z form")
+
+  private def requireHybridNumerics(profile: SearchProfile, env: Map[String, String]): Unit =
+    env("RESCORE_WEIGHT").toDoubleOption match
+      case Some(weight) if weight == 0.5 => ()
+      case _                             => sys.error(s"BOT_PROFILE=${profile.id} requires RESCORE_WEIGHT=0.5")
+    val _ = env("ORACLE_CANDIDATE_LIMIT").toIntOption
+      .filter(value => value > 0 && value <= MaxCandidateLimit)
+      .getOrElse(
+        sys.error(s"BOT_PROFILE=${profile.id} requires ORACLE_CANDIDATE_LIMIT in [1, $MaxCandidateLimit]")
+      )
+    val _ = parseTtCapacity(env.get("TT_CAPACITY"))
 
   private[bot] def supportsHybridStarPruning(version: String): Boolean =
     val SemVer = raw"^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$$".r
@@ -498,48 +543,44 @@ object Strategy:
       sys.error(s"invalid TT_CAPACITY '$capacity' (expected a positive power of two up to $MaxTtCapacity)")
     capacity
 
-  private def logStartupProvenance(
-      profile: SearchProfile,
-      model: ArtifactProvenance,
-      rescore: Option[ArtifactProvenance],
-      book: Option[ArtifactProvenance],
-      searchMode: SearchMode,
-      features: String,
-      candidateLimit: Int,
-      preRankWithModel: Boolean,
-      ttEnabled: Boolean,
-      ttCapacity: Int,
-      rescoreWeight: Option[Double],
-      timePolicy: String,
-      overheadMs: Long,
-      defaultThinkMs: Long
-  ): Unit =
+  private def logStartupProvenance(provenance: StartupProvenance): Unit =
+    println(startupProvenanceJson(provenance))
+
+  private[bot] def startupProvenanceJson(provenance: StartupProvenance): String =
     val text             = (value: String) => s"\"${jsonEscape(value)}\""
     val optionalArtifact = (value: Option[ArtifactProvenance]) =>
       value.fold("null")(artifact => s"""{"id":${text(artifact.id)},"sha256":${text(artifact.sha256)}}""")
-    val identity = sys.env.getOrElse("BOT_IDENTITY", "unspecified")
-    val wrapper  = sys.env.getOrElse("BOT_WRAPPER_VERSION", "dev")
-    val revision = sys.env.getOrElse("SOURCE_REVISION", "unknown")
-    val image    = sys.env.getOrElse("IMAGE_DIGEST", "unknown")
-    println(
-      s"""{"event":"bot_startup","identity":${text(identity)},"profile":${text(profile.id)},""" +
-        s""""wrapperVersion":${text(wrapper)},"sourceRevision":${text(revision)},""" +
-        s""""engineVersion":${text(engineDependencyVersion)},""" +
-        s""""imageDigest":${text(image)},"model":{"id":${text(model.id)},"sha256":${text(model.sha256)}},""" +
-        s""""rescoreModel":${optionalArtifact(rescore)},"openingBook":${optionalArtifact(book)},""" +
-        s""""searchMode":${text(searchMode.id)},"searchDepth":2,"chancePruning":"star1-star2",""" +
-        s""""features":${text(features)},"candidateLimit":$candidateLimit,""" +
-        s""""preRankWithModel":$preRankWithModel,"ttEnabled":$ttEnabled,"ttCapacity":$ttCapacity,""" +
-        s""""rescoreWeight":${rescoreWeight.fold("null")(_.toString)},"timePolicy":${text(timePolicy)},""" +
-        s""""overheadBufferMs":$overheadMs,"defaultThinkMs":$defaultThinkMs}"""
-    )
+    val identity                     = sys.env.getOrElse("BOT_IDENTITY", "unspecified")
+    val wrapper                      = sys.env.getOrElse("BOT_WRAPPER_VERSION", "dev")
+    val revision                     = sys.env.getOrElse("SOURCE_REVISION", "unknown")
+    val image                        = sys.env.getOrElse("IMAGE_DIGEST", "unknown")
+    val (searchDepth, chancePruning) = provenance.searchMode match
+      case SearchMode.Expectimax => (2, "star1-star2")
+      case SearchMode.OnePly     => (1, "none")
+    s"""{"event":"bot_startup","identity":${text(identity)},"profile":${text(provenance.profile.id)},""" +
+      s""""wrapperVersion":${text(wrapper)},"sourceRevision":${text(revision)},""" +
+      s""""engineVersion":${text(engineDependencyVersion)},""" +
+      s""""imageDigest":${text(image)},"model":{"id":${text(provenance.model.id)},"sha256":${text(
+          provenance.model.sha256
+        )}},""" +
+      s""""rescoreModel":${optionalArtifact(provenance.rescore)},"openingBook":${optionalArtifact(
+          provenance.book
+        )},""" +
+      s""""searchMode":${text(provenance.searchMode.id)},"searchDepth":$searchDepth,""" +
+      s""""chancePruning":${text(chancePruning)},"features":${text(provenance.features)},""" +
+      s""""candidateLimit":${provenance.candidateLimit},"preRankWithModel":${provenance.preRankWithModel},""" +
+      s""""ttEnabled":${provenance.ttEnabled},"ttCapacity":${provenance.ttCapacity},""" +
+      s""""rescoreWeight":${provenance.rescoreWeight.fold("null")(_.toString)},""" +
+      s""""timePolicy":${text(provenance.timePolicy)},"overheadBufferMs":${provenance.overheadMs},""" +
+      s""""defaultThinkMs":${provenance.defaultThinkMs}}"""
 
   private def jsonEscape(value: String): String =
     value.flatMap {
-      case '"'  => "\\\""
-      case '\\' => "\\\\"
-      case '\n' => "\\n"
-      case '\r' => "\\r"
-      case '\t' => "\\t"
-      case char => char.toString
+      case '"'                => "\\\""
+      case '\\'               => "\\\\"
+      case '\n'               => "\\n"
+      case '\r'               => "\\r"
+      case '\t'               => "\\t"
+      case char if char < ' ' => f"\\u${char.toInt}%04x"
+      case char               => char.toString
     }

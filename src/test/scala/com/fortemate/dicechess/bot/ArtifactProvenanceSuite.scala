@@ -24,13 +24,17 @@ class ArtifactProvenanceSuite extends munit.FunSuite:
       assert(error.getMessage.startsWith(s"SHA-256 mismatch for '${path.toString}'"))
     finally Files.deleteIfExists(path)
 
-  test("rejects malformed expected digests before startup"):
+  test("rejects malformed expected digests before accessing the artifact"):
     val path = Files.createTempFile("artifact-provenance", ".bin")
     try
+      Files.delete(path)
       val error = intercept[RuntimeException] {
         ArtifactProvenance.inspect(path.toString, Some("not-a-digest"), None)
       }
-      assert(error.getMessage.contains("expected 64 hexadecimal characters"))
+      assertEquals(
+        error.getMessage,
+        s"invalid expected SHA-256 for '${path.toString}' (expected 64 hexadecimal characters)"
+      )
     finally Files.deleteIfExists(path)
 
   test("fails closed when a configured artifact is missing"):

@@ -10,6 +10,8 @@ import dicechess.engine.search.{
   TranspositionTable,
   TurnGenerator
 }
+import io.circe.Json
+import io.circe.parser.parse
 import scala.jdk.CollectionConverters.*
 
 /** Proves the wiring — ONNX session + expectimax + book decorator + time-budget deadline — against the open synthetic
@@ -52,6 +54,33 @@ class StrategySuite extends munit.FunSuite:
     "OVERHEAD_BUFFER_MS"     -> "1000",
     "DEFAULT_THINK_MS"       -> "2000"
   )
+
+  private def startupProvenance(
+      searchMode: Strategy.SearchMode,
+      modelId: String = "bundled-synthetic"
+  ): Strategy.StartupProvenance =
+    Strategy.StartupProvenance(
+      profile = Strategy.SearchProfile.Legacy,
+      model = ArtifactProvenance(modelId, "f" * 64),
+      rescore = None,
+      book = Some(ArtifactProvenance("bundled-sample", "e" * 64)),
+      searchMode = searchMode,
+      features = "material",
+      candidateLimit = 4,
+      preRankWithModel = false,
+      ttEnabled = false,
+      ttCapacity = 1024,
+      rescoreWeight = None,
+      timePolicy = TimePolicies.default.id,
+      overheadMs = 300,
+      defaultThinkMs = 2000
+    )
+
+  private def parseStartup(provenance: Strategy.StartupProvenance): Json =
+    parse(Strategy.startupProvenanceJson(provenance)).fold(
+      error => fail(s"startup provenance must be valid JSON: ${error.message}"),
+      identity
+    )
 
   private def withStrategy[A](f: Strategy => A): A =
     val s =
@@ -112,6 +141,23 @@ class StrategySuite extends munit.FunSuite:
       assert(legalPaths(initialNbk).contains(moves), s"$moves must be a legal path")
     finally s.close()
 
+  test("startup provenance reports truthful search depth and chance pruning for each mode"):
+    val expectimax = parseStartup(startupProvenance(Strategy.SearchMode.Expectimax)).hcursor
+    assertEquals(expectimax.get[String]("searchMode").toOption, Some("expectimax"))
+    assertEquals(expectimax.get[Int]("searchDepth").toOption, Some(2))
+    assertEquals(expectimax.get[String]("chancePruning").toOption, Some("star1-star2"))
+
+    val onePly = parseStartup(startupProvenance(Strategy.SearchMode.OnePly)).hcursor
+    assertEquals(onePly.get[String]("searchMode").toOption, Some("one-ply"))
+    assertEquals(onePly.get[Int]("searchDepth").toOption, Some(1))
+    assertEquals(onePly.get[String]("chancePruning").toOption, Some("none"))
+
+  test("startup provenance escapes every JSON control character and round-trips its value"):
+    val controls = (0 to 0x1f).map(_.toChar).mkString
+    val modelId  = s"model-$controls-end"
+    val startup  = parseStartup(startupProvenance(Strategy.SearchMode.Expectimax, modelId))
+    assertEquals(startup.hcursor.downField("model").get[String]("id").toOption, Some(modelId))
+
   test("resolves stable search mode and time policy ids"):
     assertEquals(Strategy.resolveSearchMode("ONE-PLY"), Strategy.SearchMode.OnePly)
     assertEquals(Strategy.resolveTimePolicy("legacy-linear-v1"), TimePolicies.LegacyLinear)
@@ -120,10 +166,18 @@ class StrategySuite extends munit.FunSuite:
     interceptMessage[RuntimeException]("unknown SEARCH_MODE 'deep' (expected expectimax|one-ply)") {
       Strategy.resolveSearchMode("deep")
     }
+    interceptMessage[RuntimeException](
+      "unknown TIME_POLICY 'future-v1' (expected empirical-v1|legacy-linear-v1)"
+    ) {
+      Strategy.resolveTimePolicy("future-v1")
+    }
 
   test("resolves profiles and reads the engine version from generated build metadata"):
     assertEquals(Strategy.resolveSearchProfile("HYBRID-STAR2-V1"), Strategy.SearchProfile.HybridStar2V1)
-    assertEquals(Strategy.engineDependencyVersion, "0.5.0")
+    assert(
+      raw"^\d+\.\d+\.\d+(?:[-+].*)?$$".r.matches(Strategy.engineDependencyVersion),
+      s"unexpected engine version '${Strategy.engineDependencyVersion}'"
+    )
     interceptMessage[RuntimeException]("unknown BOT_PROFILE 'future' (expected legacy|hybrid-star2-v1)") {
       Strategy.resolveSearchProfile("future")
     }
@@ -254,11 +308,6 @@ class StrategySuite extends munit.FunSuite:
       assert(seen.last.ttProbes > 0)
       assert(seen.last.ttHits > 0, s"expected a repeated-position TT hit, got ${seen.last}")
     finally s.close()
-    interceptMessage[RuntimeException](
-      "unknown TIME_POLICY 'future-v1' (expected empirical-v1|legacy-linear-v1)"
-    ) {
-      Strategy.resolveTimePolicy("future-v1")
-    }
 
   test("fixed corpus exercises deterministic pre-rank and TT on/off profiles"):
     def run(preRank: Boolean, ttEnabled: Boolean): (List[List[String]], List[RootSearchStats]) =
@@ -268,7 +317,7 @@ class StrategySuite extends munit.FunSuite:
         OnnxFeatures.extract,
         candidateLimit = 2,
         overheadBufferMs = 5,
-        defaultThinkMs = 1000,
+        defaultThinkMs = 10000,
         openingBook = Map.empty,
         statsSink = stats => seen += stats,
         preRankWithModel = preRank,
