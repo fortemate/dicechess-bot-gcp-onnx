@@ -16,6 +16,15 @@ class MainSuite extends munit.FunSuite:
   private val syntheticModel = Strategy.syntheticModelPath()
   private val initialNbk     = FenParser.InitialPosition + " NBK"
 
+  test("production entry point rejects an absent or empty webhook secret"):
+    interceptMessage[RuntimeException]("DICECHESS_WEBHOOK_SECRET must be set and non-empty") {
+      Main.requireWebhookSecret(None)
+    }
+    interceptMessage[RuntimeException]("DICECHESS_WEBHOOK_SECRET must be set and non-empty") {
+      Main.requireWebhookSecret(Some("  "))
+    }
+    assertEquals(Main.requireWebhookSecret(Some(Secret)), Secret)
+
   test("end to end over real HTTP: a signed, clocked turn returns a path the engine considers legal"):
     val strategy =
       new Strategy(syntheticModel, OnnxFeatures.extract, candidateLimit = 4, overheadBufferMs = 5, defaultThinkMs = 200)

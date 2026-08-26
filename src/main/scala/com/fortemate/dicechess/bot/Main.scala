@@ -12,30 +12,38 @@ import scala.jdk.CollectionConverters.*
   * it and binds the port Cloud Run gives us.
   *
   * Configuration (env vars; Cloud Run service settings in production):
-  *   - `DICECHESS_WEBHOOK_SECRET` — the per-bot signing key from webhook registration.
+  *   - `DICECHESS_WEBHOOK_SECRET` — required per-bot signing key from webhook registration; an empty value fails
+  *     startup.
+  *   - `BOT_PROFILE` — `legacy` (default) or the fail-closed production contract `hybrid-star2-v1`.
   *   - `MODEL_PATH` — path to the mounted ONNX value model (e.g. `/models/oracle-3.onnx`). Unset → the bundled
   *     synthetic model (boots + plays legal, signal-free moves).
   *   - `OPENING_BOOK_PATH` — path to an external TSV opening book. Unset → the bundled five-entry sample.
   *   - `ORACLE_FEATURES` — feature extractor the model was trained on: `rich` (default; oracle-3), `material`, or
   *     `kcp`.
   *   - `ORACLE_CANDIDATE_LIMIT` — expectimax candidate width (default: the engine's own).
+  *   - `PRE_RANK_WITH_MODEL` — use the leaf model to pre-rank expectimax candidates (`false` by default).
+  *   - `TT_ENABLED` — enable the per-Strategy transposition table (`false` by default).
+  *   - `TT_CAPACITY` — positive power-of-two TT capacity (default: 262144 entries).
   *   - `RESCORE_MODEL_PATH` — optional KCP model that rescores expectimax root candidates.
   *   - `RESCORE_WEIGHT` — root-rescore blend weight in `(0, 1]` (default `0.5`).
+  *   - `MODEL_SHA256`, `RESCORE_MODEL_SHA256`, `OPENING_BOOK_SHA256` — optional expected artifact digests; a mismatch
+  *     fails startup. Matching `*_ID` values set human-readable immutable artifact identifiers.
+  *   - `BOT_IDENTITY`, `BOT_WRAPPER_VERSION`, `SOURCE_REVISION`, `IMAGE_DIGEST` — non-secret deployment provenance
+  *     included in the structured startup event.
   *   - `SEARCH_MODE` — `expectimax` (default) or `one-ply`.
   *   - `TIME_POLICY` — `empirical-v1` (default) or `legacy-linear-v1`.
   *   - `OVERHEAD_BUFFER_MS` (default `300`), `DEFAULT_THINK_MS` (default `2000`, untimed games).
   *
-  * The Fischer increment arrives on the wire (`ctx.clock()`, runtime >= 0.2.0) — nothing to configure.
+  * One Strategy serializes requests because the v0.5 search and TT are single-writer. Use independent replicas for
+  * parallelism. The Fischer increment arrives on the wire (`ctx.clock()`, runtime >= 0.2.0) — nothing to configure.
   */
 object Main:
 
   private val WebhookPath = "/api/webhook"
 
   def main(args: Array[String]): Unit =
-    val _      = args
-    val secret = sys.env.getOrElse("DICECHESS_WEBHOOK_SECRET", "")
-    if secret.isEmpty then
-      System.err.println("[bot] DICECHESS_WEBHOOK_SECRET is not set — only the verification handshake will succeed")
+    val _        = args
+    val secret   = requireWebhookSecret(sys.env.get("DICECHESS_WEBHOOK_SECRET"))
     val strategy = Strategy.fromEnvironment // builds and warms the ONNX session at startup
     val server   = CustomHandlerServer.start(resolvePort, WebhookPath, new WebhookHandler(secret, adapt(strategy)))
     val stopped  = new CountDownLatch(1)
@@ -43,6 +51,11 @@ object Main:
     Runtime.getRuntime.addShutdownHook(hook)
     println(s"[bot] ONNX custom handler listening on :${server.getAddress.getPort}$WebhookPath")
     stopped.await()
+
+  private[bot] def requireWebhookSecret(value: Option[String]): String =
+    value.filter(_.trim.nonEmpty).getOrElse {
+      sys.error("DICECHESS_WEBHOOK_SECRET must be set and non-empty")
+    }
 
   private def stopGracefully(server: HttpServer, strategy: Strategy, stopped: CountDownLatch): Unit =
     try server.stop(5)

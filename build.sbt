@@ -11,7 +11,7 @@ ThisBuild / scalaVersion         := "3.8.4"
 
 ThisBuild / description :=
   "Dice Chess webhook bot for Google Cloud Run, powered by ONNX 2-ply expectimax search and an opening book."
-ThisBuild / licenses      := List(License("AGPL-3.0", uri("https://www.gnu.org/licenses/agpl-3.0.txt")))
+ThisBuild / licenses      := List(License("AGPL-3.0-only", uri("https://www.gnu.org/licenses/agpl-3.0.txt")))
 ThisBuild / versionScheme := Some("early-semver")
 
 ThisBuild / scmInfo := Some(
@@ -31,7 +31,7 @@ ThisBuild / developers := List(
 )
 
 // Both Fortemate libraries are public Maven Central artifacts; no repository credentials are required.
-val DiceChessEngineVersion     = "0.4.0"
+val DiceChessEngineVersion     = "0.5.0"
 val DiceChessBotRuntimeVersion = "1.0.0"
 val CirceVersion               = "0.14.16"
 val MunitVersion               = "1.3.5"
@@ -61,6 +61,11 @@ lazy val root = (project in file("."))
       "io.circe"      %% "circe-parser"          % CirceVersion % Test,
       "org.scalameta" %% "munit"                 % MunitVersion % Test
     ),
+    Compile / resourceGenerators += Def.task {
+      val output = (Compile / resourceManaged).value / "dicechess-engine-version.txt"
+      IO.write(output, DiceChessEngineVersion + "\n")
+      Seq(output)
+    }.taskValue,
     coverageExcludedFiles    := ".*Main\\.scala",
     coverageMinimumStmtTotal := 90,
     coverageFailOnMinimum    := true,

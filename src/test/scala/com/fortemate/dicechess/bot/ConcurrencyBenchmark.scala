@@ -41,7 +41,7 @@ object ConcurrencyBenchmark:
       val requestCounts = List(1, 2, 4, 8)
       val totalRequests = 60
 
-      println("\n--- 1. SERIALIZED (using synchronized lock) ---")
+      println("\n--- 1. CALLER-SERIALIZED (external synchronized lock) ---")
       val lock = new Object()
       for concurrency <- requestCounts do
         collectedStats.clear()
@@ -56,7 +56,7 @@ object ConcurrencyBenchmark:
             }
         )
 
-      println("\n--- 2. CONCURRENT (lock-free) ---")
+      println("\n--- 2. CONCURRENT CALLERS (Strategy serializes ONNX/TT internally) ---")
       for concurrency <- requestCounts do
         collectedStats.clear()
         runScenario(

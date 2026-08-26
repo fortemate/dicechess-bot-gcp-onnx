@@ -22,6 +22,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
 
     steps:
       - name: Verify release tag
@@ -94,6 +96,8 @@ jobs:
       - name: Extract image metadata
         id: metadata
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: index,manifest
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -102,15 +106,196 @@ jobs:
             type=raw,value=latest
             type=sha,format=short
           labels: |
-            org.opencontainers.image.authors=Fortemate
+            org.opencontainers.image.title=Dice Chess ONNX webhook bot
+            org.opencontainers.image.description=ONNX expectimax Dice Chess bot with model pre-ranking, Star pruning, TT, and root rescoring
+            org.opencontainers.image.url=https://github.com/fortemate/dicechess-bot-gcp-onnx
+            org.opencontainers.image.source=https://github.com/fortemate/dicechess-bot-gcp-onnx
+            org.opencontainers.image.documentation=https://github.com/fortemate/dicechess-bot-gcp-onnx#readme
+            org.opencontainers.image.vendor=Fortemate
+            org.opencontainers.image.licenses=AGPL-3.0-only
+            org.opencontainers.image.authors=Jegors Čemisovs
+            org.opencontainers.image.base.name=docker.io/library/eclipse-temurin:25-jre-noble
+          annotations: |
+            org.opencontainers.image.title=Dice Chess ONNX webhook bot
+            org.opencontainers.image.description=ONNX expectimax Dice Chess bot with model pre-ranking, Star pruning, TT, and root rescoring
+            org.opencontainers.image.url=https://github.com/fortemate/dicechess-bot-gcp-onnx
+            org.opencontainers.image.source=https://github.com/fortemate/dicechess-bot-gcp-onnx
+            org.opencontainers.image.documentation=https://github.com/fortemate/dicechess-bot-gcp-onnx#readme
+            org.opencontainers.image.vendor=Fortemate
+            org.opencontainers.image.licenses=AGPL-3.0-only
+            org.opencontainers.image.authors=Jegors Čemisovs
+            org.opencontainers.image.base.name=docker.io/library/eclipse-temurin:25-jre-noble
+
+      - name: Build amd64 image for smoke testing
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: dicechess-bot-gcp-onnx:smoke
+          build-args: |
+            APP_VERSION=${{ github.ref_name }}
+            SOURCE_REVISION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke-test the hardened container and a signed synthetic-model turn
+        run: |
+          set -euo pipefail
+          docker run --detach --name bot-smoke \
+            --publish 127.0.0.1:8099:8080 \
+            --read-only --tmpfs /tmp:rw,nosuid,exec,size=256m \
+            --cap-drop ALL --security-opt no-new-privileges:true \
+            --memory 1g --memory-swap 1g --cpus 2 \
+            --env DICECHESS_WEBHOOK_SECRET=smoke \
+            --env DEFAULT_THINK_MS=200 \
+            --env SEARCH_MODE=expectimax \
+            --env PRE_RANK_WITH_MODEL=true \
+            --env TT_ENABLED=true \
+            --env TT_CAPACITY=1024 \
+            dicechess-bot-gcp-onnx:smoke
+          trap 'docker logs bot-smoke; docker rm -f bot-smoke' EXIT
+
+          test "$(docker exec bot-smoke id -u)" = "10001"
+          response=""
+          for attempt in {1..30}; do
+            if response=$(curl --fail --silent --show-error \
+              --request POST http://127.0.0.1:8099/api/webhook \
+              --header "Content-Type: application/json" \
+              --data '{"type":"verification","nonce":"container-smoke"}'); then
+              break
+            fi
+            sleep 1
+          done
+          jq --exit-status '.nonce == "container-smoke"' <<<"$response"
+
+          body='{"type":"yourTurn","gameId":"smoke-game","seat":"White","state":{"dfen":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1 NBK","clocks":{"white":5000,"black":5000},"timeControl":{"Fischer":{"initialSeconds":300,"incrementSeconds":3}}}}'
+          timestamp=$(date +%s)
+          signature=$(printf '%s' "${timestamp}.${body}" | openssl dgst -sha256 -hmac smoke -hex | awk '{print $2}')
+          turn=$(curl --fail --silent --show-error \
+            --request POST http://127.0.0.1:8099/api/webhook \
+            --header "Content-Type: application/json" \
+            --header "x-dicechess-timestamp: $timestamp" \
+            --header "x-dicechess-signature: $signature" \
+            --data "$body")
+          jq --exit-status '.moves | type == "array" and length > 0' <<<"$turn"
 
       - name: Build and push image
+        id: push
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: |
+            APP_VERSION=${{ github.ref_name }}
+            SOURCE_REVISION=${{ github.sha }}
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
+          annotations: ${{ steps.metadata.outputs.annotations }}
+          provenance: mode=max,version=v1
+          sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Scan published image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Validate the published multi-arch index and attestations
+        env:
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          EXPECTED_SOURCE: https://github.com/fortemate/dicechess-bot-gcp-onnx
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "$IMAGE_REF"
+          index_json=$(docker buildx imagetools inspect --raw "$IMAGE_REF")
+          expected_version=${GITHUB_REF_NAME#v}
+          jq --exit-status \
+            --arg source "$EXPECTED_SOURCE" \
+            --arg revision "$GITHUB_SHA" \
+            --arg version "$expected_version" '
+            .mediaType == "application/vnd.oci.image.index.v1+json" and
+            ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")] | length) == 1 and
+            ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64")] | length) == 1 and
+            .annotations["org.opencontainers.image.source"] == $source and
+            .annotations["org.opencontainers.image.licenses"] == "AGPL-3.0-only" and
+            .annotations["org.opencontainers.image.revision"] == $revision and
+            .annotations["org.opencontainers.image.version"] == $version
+          ' <<<"$index_json" >/dev/null
+
+          image_repository=${IMAGE_REF%@*}
+          for architecture in amd64 arm64; do
+            manifest_digest=$(jq -r --arg architecture "$architecture" '
+              .manifests[] |
+              select(.platform.os == "linux" and .platform.architecture == $architecture) |
+              .digest
+            ' <<<"$index_json")
+            manifest_json=$(docker buildx imagetools inspect --raw "$image_repository@$manifest_digest")
+            jq --exit-status \
+              --arg source "$EXPECTED_SOURCE" \
+              --arg revision "$GITHUB_SHA" \
+              --arg version "$expected_version" '
+              .mediaType == "application/vnd.oci.image.manifest.v1+json" and
+              .annotations["org.opencontainers.image.source"] == $source and
+              .annotations["org.opencontainers.image.licenses"] == "AGPL-3.0-only" and
+              .annotations["org.opencontainers.image.revision"] == $revision and
+              .annotations["org.opencontainers.image.version"] == $version
+            ' <<<"$manifest_json" >/dev/null
+
+            attestation_digest=$(jq -r --arg manifest_digest "$manifest_digest" '
+              .manifests[] |
+              select(
+                .platform.os == "unknown" and
+                .platform.architecture == "unknown" and
+                .annotations["vnd.docker.reference.type"] == "attestation-manifest" and
+                .annotations["vnd.docker.reference.digest"] == $manifest_digest
+              ) |
+              .digest
+            ' <<<"$index_json" | head -n 1)
+            test -n "$attestation_digest"
+            attestation_json=$(docker buildx imagetools inspect --raw "$image_repository@$attestation_digest")
+            jq --exit-status --arg manifest_digest "$manifest_digest" '
+              .mediaType == "application/vnd.oci.image.manifest.v1+json" and
+              .subject.digest == $manifest_digest and
+              any(
+                .layers[];
+                .mediaType == "application/vnd.in-toto+json" and
+                .annotations["in-toto.io/predicate-type"] == "https://slsa.dev/provenance/v1"
+              ) and
+              any(
+                .layers[];
+                .mediaType == "application/vnd.in-toto+json" and
+                .annotations["in-toto.io/predicate-type"] == "https://spdx.dev/Document"
+              )
+            ' <<<"$attestation_json" >/dev/null
+
+            provenance_json=$(docker buildx imagetools inspect \
+              "$image_repository@$manifest_digest" --format '{{json .Provenance.SLSA}}')
+            jq --exit-status '
+              .buildDefinition.buildType == "https://mobyproject.org/buildkit@v1" and
+              (.buildDefinition.resolvedDependencies | length) > 0 and
+              all(
+                .buildDefinition.resolvedDependencies[];
+                (.uri | type == "string" and length > 0) and
+                (.digest.sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+              )
+            ' <<<"$provenance_json" >/dev/null
+          done
+
+          gh attestation verify "oci://$IMAGE_REF" \
+            --repo "$GITHUB_REPOSITORY" \
+            --source-digest "$GITHUB_SHA" \
+            --source-ref "$GITHUB_REF"
