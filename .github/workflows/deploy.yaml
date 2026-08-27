@@ -20,6 +20,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
+      artifact-metadata: write
       contents: read
       packages: write
       id-token: write
@@ -215,87 +216,10 @@ jobs:
 
       - name: Validate the published multi-arch index and attestations
         env:
-          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
-          EXPECTED_SOURCE: https://github.com/fortemate/dicechess-bot-gcp-onnx
           GH_TOKEN: ${{ github.token }}
+          IMAGE_DIGEST: ${{ steps.push.outputs.digest }}
         run: |
-          set -euo pipefail
-          docker buildx imagetools inspect "$IMAGE_REF"
-          index_json=$(docker buildx imagetools inspect --raw "$IMAGE_REF")
-          expected_version=${GITHUB_REF_NAME#v}
-          jq --exit-status \
-            --arg source "$EXPECTED_SOURCE" \
-            --arg revision "$GITHUB_SHA" \
-            --arg version "$expected_version" '
-            .mediaType == "application/vnd.oci.image.index.v1+json" and
-            ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")] | length) == 1 and
-            ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64")] | length) == 1 and
-            .annotations["org.opencontainers.image.source"] == $source and
-            .annotations["org.opencontainers.image.licenses"] == "AGPL-3.0-only" and
-            .annotations["org.opencontainers.image.revision"] == $revision and
-            .annotations["org.opencontainers.image.version"] == $version
-          ' <<<"$index_json" >/dev/null
-
-          image_repository=${IMAGE_REF%@*}
-          for architecture in amd64 arm64; do
-            manifest_digest=$(jq -r --arg architecture "$architecture" '
-              .manifests[] |
-              select(.platform.os == "linux" and .platform.architecture == $architecture) |
-              .digest
-            ' <<<"$index_json")
-            manifest_json=$(docker buildx imagetools inspect --raw "$image_repository@$manifest_digest")
-            jq --exit-status \
-              --arg source "$EXPECTED_SOURCE" \
-              --arg revision "$GITHUB_SHA" \
-              --arg version "$expected_version" '
-              .mediaType == "application/vnd.oci.image.manifest.v1+json" and
-              .annotations["org.opencontainers.image.source"] == $source and
-              .annotations["org.opencontainers.image.licenses"] == "AGPL-3.0-only" and
-              .annotations["org.opencontainers.image.revision"] == $revision and
-              .annotations["org.opencontainers.image.version"] == $version
-            ' <<<"$manifest_json" >/dev/null
-
-            attestation_digest=$(jq -r --arg manifest_digest "$manifest_digest" '
-              .manifests[] |
-              select(
-                .platform.os == "unknown" and
-                .platform.architecture == "unknown" and
-                .annotations["vnd.docker.reference.type"] == "attestation-manifest" and
-                .annotations["vnd.docker.reference.digest"] == $manifest_digest
-              ) |
-              .digest
-            ' <<<"$index_json" | head -n 1)
-            test -n "$attestation_digest"
-            attestation_json=$(docker buildx imagetools inspect --raw "$image_repository@$attestation_digest")
-            jq --exit-status --arg manifest_digest "$manifest_digest" '
-              .mediaType == "application/vnd.oci.image.manifest.v1+json" and
-              .subject.digest == $manifest_digest and
-              any(
-                .layers[];
-                .mediaType == "application/vnd.in-toto+json" and
-                .annotations["in-toto.io/predicate-type"] == "https://slsa.dev/provenance/v1"
-              ) and
-              any(
-                .layers[];
-                .mediaType == "application/vnd.in-toto+json" and
-                .annotations["in-toto.io/predicate-type"] == "https://spdx.dev/Document"
-              )
-            ' <<<"$attestation_json" >/dev/null
-
-            provenance_json=$(docker buildx imagetools inspect \
-              "$image_repository@$manifest_digest" --format '{{json .Provenance.SLSA}}')
-            jq --exit-status '
-              .buildDefinition.buildType == "https://mobyproject.org/buildkit@v1" and
-              (.buildDefinition.resolvedDependencies | length) > 0 and
-              all(
-                .buildDefinition.resolvedDependencies[];
-                (.uri | type == "string" and length > 0) and
-                (.digest.sha256 | type == "string" and test("^[0-9a-f]{64}$"))
-              )
-            ' <<<"$provenance_json" >/dev/null
-          done
-
-          gh attestation verify "oci://$IMAGE_REF" \
-            --repo "$GITHUB_REPOSITORY" \
-            --source-digest "$GITHUB_SHA" \
-            --source-ref "$GITHUB_REF"
+          ./scripts/validate-published-image.sh \
+            --release-tag "$GITHUB_REF_NAME" \
+            --source-revision "$GITHUB_SHA" \
+            --image-digest "$IMAGE_DIGEST"

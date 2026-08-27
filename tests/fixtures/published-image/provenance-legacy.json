@@ -1,0 +1,28 @@
+{
+  "linux/amd64": {
+    "SLSA": {
+      "buildDefinition": {
+        "buildType": "https://mobyproject.org/buildkit@v1",
+        "resolvedDependencies": [
+          {
+            "uri": "pkg:docker/eclipse-temurin@25-jre-noble?platform=linux%2Famd64",
+            "digest": { "sha256": "7777777777777777777777777777777777777777777777777777777777777777" }
+          }
+        ]
+      }
+    }
+  },
+  "linux/arm64": {
+    "SLSA": {
+      "buildDefinition": {
+        "buildType": "https://mobyproject.org/buildkit@v1",
+        "resolvedDependencies": [
+          {
+            "uri": "pkg:docker/eclipse-temurin@25-jre-noble?platform=linux%2Farm64",
+            "digest": { "sha256": "8888888888888888888888888888888888888888888888888888888888888888" }
+          }
+        ]
+      }
+    }
+  }
+}

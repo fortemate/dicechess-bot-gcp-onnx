@@ -1,0 +1,14 @@
+{
+  "User": "root",
+  "Env": [
+    "BOT_WRAPPER_VERSION=v0.3.0",
+    "SOURCE_REVISION=0123456789abcdef0123456789abcdef01234567",
+    "PORT=8080"
+  ],
+  "Labels": {
+    "org.opencontainers.image.source": "https://github.com/fortemate/dicechess-bot-gcp-onnx",
+    "org.opencontainers.image.licenses": "AGPL-3.0-only",
+    "org.opencontainers.image.revision": "0123456789abcdef0123456789abcdef01234567",
+    "org.opencontainers.image.version": "0.3.0"
+  }
+}

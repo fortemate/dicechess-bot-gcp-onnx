@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+: "${GH_ARGS_LOG:?GH_ARGS_LOG is required}"
+
+readonly source_revision="${GH_STUB_TAG_REVISION:-0123456789abcdef0123456789abcdef01234567}"
+readonly annotated_tag_sha="abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+
+if [[ "${1-}" == "api" ]]; then
+  case "${2-}" in
+    repos/fortemate/dicechess-bot-gcp-onnx/git/ref/tags/v0.3.0)
+      if [[ "${GH_STUB_TAG_MODE:-lightweight}" == "annotated" ]]; then
+        printf '{"object":{"type":"tag","sha":"%s"}}\n' "$annotated_tag_sha"
+      else
+        printf '{"object":{"type":"commit","sha":"%s"}}\n' "$source_revision"
+      fi
+      ;;
+    "repos/fortemate/dicechess-bot-gcp-onnx/git/tags/${annotated_tag_sha}")
+      printf '{"object":{"type":"commit","sha":"%s"}}\n' "$source_revision"
+      ;;
+    *)
+      printf 'unexpected gh api path: %s\n' "${2-}" >&2
+      exit 64
+      ;;
+  esac
+  exit 0
+fi
+
+if [[ "${1-}" == "attestation" && "${2-}" == "verify" ]]; then
+  printf '%s\n' "$@" >"$GH_ARGS_LOG"
+  exit "${GH_STUB_EXIT:-0}"
+fi
+
+printf 'unexpected gh invocation:' >&2
+printf ' %q' "$@" >&2
+printf '\n' >&2
+exit 64
