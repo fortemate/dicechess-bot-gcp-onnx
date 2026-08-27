@@ -28,7 +28,10 @@ run = "sbt testAll"
 
 [tasks.check]
 description = "Run all local quality gates"
-run = "sbt 'scalafixAll --check; clean; scalafmtCheckAll; testAll'"
+run = """
+sbt 'scalafixAll --check; clean; scalafmtCheckAll; testAll'
+./tests/validate-published-image-test.sh
+"""
 
 [tasks.assembly]
 description = "Build the runnable fat jar"

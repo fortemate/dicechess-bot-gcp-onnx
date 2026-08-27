@@ -35,6 +35,9 @@ jobs:
           ./actionlint -shellcheck= -color
           rm -f "$archive" actionlint
 
+      - name: Test published-image validator
+        run: ./tests/validate-published-image-test.sh
+
       - name: Setup Java
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:

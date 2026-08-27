@@ -1,0 +1,16 @@
+{
+  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+  "config": {
+    "mediaType": "application/vnd.oci.image.config.v1+json",
+    "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  },
+  "layers": [
+    { "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111" }
+  ],
+  "annotations": {
+    "org.opencontainers.image.source": "https://github.com/fortemate/dicechess-bot-gcp-onnx",
+    "org.opencontainers.image.licenses": "AGPL-3.0-only",
+    "org.opencontainers.image.revision": "0123456789abcdef0123456789abcdef01234567",
+    "org.opencontainers.image.version": "0.3.0"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "linux/amd64": {
+    "SLSA": {
+      "buildDefinition": {
+        "buildType": "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md",
+        "resolvedDependencies": []
+      }
+    }
+  },
+  "linux/arm64": {
+    "SLSA": {
+      "buildDefinition": {
+        "buildType": "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md",
+        "resolvedDependencies": [
+          {
+            "uri": "pkg:docker/eclipse-temurin@25-jre-noble?platform=linux%2Farm64",
+            "digest": { "sha256": "8888888888888888888888888888888888888888888888888888888888888888" }
+          }
+        ]
+      }
+    }
+  }
+}

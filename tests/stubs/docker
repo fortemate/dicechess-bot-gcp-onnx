@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+: "${VALIDATOR_FIXTURE_DIR:?VALIDATOR_FIXTURE_DIR is required}"
+
+readonly repository="ghcr.io/fortemate/dicechess-bot-gcp-onnx"
+readonly image_ref="${repository}@sha256:9999999999999999999999999999999999999999999999999999999999999999"
+readonly amd64_ref="${repository}@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+readonly arm64_ref="${repository}@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+readonly amd64_attestation_ref="${repository}@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+readonly arm64_attestation_ref="${repository}@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+
+if [[ "${1-}" != "buildx" || "${2-}" != "imagetools" || "${3-}" != "inspect" ]]; then
+  printf 'unexpected docker invocation:' >&2
+  printf ' %q' "$@" >&2
+  printf '\n' >&2
+  exit 64
+fi
+
+if [[ "${4-}" == "--raw" && $# -eq 5 ]]; then
+  case "$5" in
+    "$image_ref")
+      cat "${VALIDATOR_FIXTURE_DIR}/${VALIDATOR_INDEX_FIXTURE:-index.json}"
+      ;;
+    "$amd64_ref")
+      cat "${VALIDATOR_FIXTURE_DIR}/manifest-amd64.json"
+      ;;
+    "$arm64_ref")
+      cat "${VALIDATOR_FIXTURE_DIR}/manifest-arm64.json"
+      ;;
+    "$amd64_attestation_ref")
+      cat "${VALIDATOR_FIXTURE_DIR}/${VALIDATOR_AMD64_ATTESTATION_FIXTURE:-attestation-amd64.json}"
+      ;;
+    "$arm64_attestation_ref")
+      cat "${VALIDATOR_FIXTURE_DIR}/attestation-arm64.json"
+      ;;
+    *)
+      printf 'unexpected raw ref: %s\n' "$5" >&2
+      exit 64
+      ;;
+  esac
+  exit 0
+fi
+
+if [[ $# -eq 6 && "${5-}" == "--format" ]]; then
+  case "${4}|${6}" in
+    "${amd64_ref}|{{json .Image.Config}}")
+      cat "${VALIDATOR_FIXTURE_DIR}/${VALIDATOR_AMD64_CONFIG_FIXTURE:-config-amd64.json}"
+      ;;
+    "${arm64_ref}|{{json .Image.Config}}")
+      cat "${VALIDATOR_FIXTURE_DIR}/config-arm64.json"
+      ;;
+    "${image_ref}|{{json .Provenance}}")
+      cat "${VALIDATOR_FIXTURE_DIR}/${VALIDATOR_PROVENANCE_FIXTURE:-provenance-current.json}"
+      ;;
+    *)
+      printf 'unexpected formatted ref/template: %s | %s\n' "$4" "$6" >&2
+      exit 64
+      ;;
+  esac
+  exit 0
+fi
+
+printf 'unexpected docker invocation:' >&2
+printf ' %q' "$@" >&2
+printf '\n' >&2
+exit 64

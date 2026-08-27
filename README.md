@@ -167,6 +167,37 @@ To build a local container image instead (the multi-stage build runs sbt itself)
 docker build -t dicechess-bot-gcp-onnx:local .
 ```
 
+### Verify or recover a published image
+
+Publishing and verification are deliberately separate. If the publish workflow pushed an immutable
+image but its final validation step failed, do not move the release tag, rebuild the release, or
+retag the image. Run **Ops: Verify Published Bot Image** from `main` with all three exact values from
+the original run:
+
+- `release_tag`, for example `v0.3.0`;
+- the full 40-character `source_revision`;
+- the multi-architecture index `image_digest`, including its `sha256:` prefix.
+
+The recovery workflow has read-only repository, package, and attestation permissions. It never builds,
+pushes, or retags. It verifies the raw OCI index and both platform manifests, exact OCI labels, the
+non-root `app` user, wrapper/revision environment metadata, per-platform SLSA and SPDX attestation
+manifests, the live release tag (including annotated tags), and the GitHub attestation against the
+exact release ref, source commit, and signer workflow.
+
+The validator reads BuildKit provenance from the multi-platform index's `.Provenance` map. It accepts
+the current BuildKit definition URL
+`https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md` and the legacy
+`https://mobyproject.org/buildkit@v1` identifier used by older BuildKit releases; every other build
+type fails closed. To reproduce the same read-only validation locally after authenticating Docker and
+GitHub CLI for GHCR:
+
+```bash
+./scripts/validate-published-image.sh \
+  --release-tag v0.3.0 \
+  --source-revision <full-release-commit-sha> \
+  --image-digest sha256:<published-multi-arch-index-digest>
+```
+
 Then register the bot (any HTTP client; `curl` shown), using the printed service URL:
 
 ```bash

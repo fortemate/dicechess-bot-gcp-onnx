@@ -1,0 +1,69 @@
+name: "Ops: Verify Published Bot Image"
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Exact immutable release tag (vX.Y.Z)
+        required: true
+        type: string
+      source_revision:
+        description: Exact full source commit SHA recorded by the release
+        required: true
+        type: string
+      image_digest:
+        description: Exact published multi-arch index digest (sha256:...)
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: verify-published-image-${{ inputs.image_digest }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      attestations: read
+      contents: read
+      packages: read
+
+    steps:
+      - name: Require the trusted main-branch validator
+        env:
+          WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          if [[ "$WORKFLOW_REF" != "refs/heads/main" ]]; then
+            echo "::error::Run recovery verification from main, not '$WORKFLOW_REF'."
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Verify the immutable published image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+        run: |
+          ./scripts/validate-published-image.sh \
+            --release-tag "$RELEASE_TAG" \
+            --source-revision "$SOURCE_REVISION" \
+            --image-digest "$IMAGE_DIGEST"
