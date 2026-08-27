@@ -12,10 +12,10 @@ container suitable for **Google Cloud Run**.
 The named `hybrid-star2-v1` profile combines model pre-ranking, Star1/Star2 chance-node pruning, a
 bounded transposition table, and a KCP root rescorer. It is deliberately fail-closed: engine 0.5.0 is
 rejected because root rescoring prevents useful Star cutoffs in that release
-([engine#87](https://github.com/fortemate/dicechess-engine/issues/87)). The profile becomes runnable
-only after this wrapper pins the reviewed patch release. One search instance is single-writer; safe
-throughput scaling comes from independent container replicas, each with its own ONNX sessions and
-table.
+([engine#87](https://github.com/fortemate/dicechess-engine/issues/87)). The wrapper now pins engine
+0.6.0, which resolves the issue ([engine#89](https://github.com/fortemate/dicechess-engine/pull/89)),
+making the profile runnable. One search instance is single-writer; safe throughput scaling comes from
+independent container replicas, each with its own ONNX sessions and table.
 
 The same image can instead run the model as a direct one-ply evaluator (`OnnxEvalSearch`) and can be
 hosted by any container platform with a public HTTPS endpoint, including Northflank. Search mode and
@@ -149,8 +149,8 @@ gcloud secrets add-iam-policy-binding "$SECRET_NAME" \
 
 # 4. Deploy with the model mounted read-only + selected via env. One Strategy serializes search, so
 #    keep per-instance concurrency at 1 and scale with independent replicas. Scale-to-zero avoids idle instances.
-#    Verify all three local files with sha256sum before using their expected values below. This profile
-#    intentionally refuses to start until the image contains the engine#87 patch release.
+#    Verify all three local files with sha256sum before using their expected values below. The wrapper
+#    pins engine 0.6.0, which includes the root-rescore-aware Star pruning fix (engine#89).
 gcloud run deploy dicechess-bot-gcp-onnx \
   --image "$IMAGE" --region "$REGION" \
   --service-account "$SERVICE_ACCOUNT_EMAIL" \
