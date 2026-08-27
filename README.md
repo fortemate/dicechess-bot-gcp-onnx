@@ -113,6 +113,15 @@ Each release publishes a multi-architecture image to GitHub Container Registry a
 `ghcr.io/fortemate/dicechess-bot-gcp-onnx`. Pin the published image by digest in production;
 `latest` is useful only for discovery and tracks the most recent release.
 
+### Release and verification recovery
+
+If the CD workflow fails at the post-publish validation step after an immutable multi-arch image index has already been pushed to GHCR, **do not rebuild, push, retag, or recreate the release tag**. A published image artifact exists in GHCR independently of the final status of a workflow run.
+
+To safely verify an already-published immutable image digest without altering repository state:
+1. Run the **Ops: Verify Published Image** workflow (`.github/workflows/verify-image.yaml`) via `workflow_dispatch`.
+2. Provide the target image digest (e.g. `ghcr.io/fortemate/dicechess-bot-gcp-onnx@sha256:ebf479d1be91cd2401c32547ce3d83dc459dbf30b18ae0a3c36d7685ed92765d`), expected git commit SHA (`a168ca26e076c9286b9ca37bf83f538201c5d578`), and release ref (`refs/tags/v0.3.0`).
+3. This verify-only path checks the index structure, platform manifests, attestation manifests, Buildx SLSA provenance contract, and GitHub cryptographic attestations without modifying the container registry or git tags.
+
 ```bash
 REGION=us-central1
 IMAGE=ghcr.io/fortemate/dicechess-bot-gcp-onnx@sha256:<published-multi-arch-index-digest>

@@ -222,12 +222,14 @@ jobs:
           set -euo pipefail
           docker buildx imagetools inspect "$IMAGE_REF"
           index_json=$(docker buildx imagetools inspect --raw "$IMAGE_REF")
+          index_provenance_json=$(docker buildx imagetools inspect "$IMAGE_REF" --format '{{json .Provenance}}')
           expected_version=${GITHUB_REF_NAME#v}
           jq --exit-status \
             --arg source "$EXPECTED_SOURCE" \
             --arg revision "$GITHUB_SHA" \
             --arg version "$expected_version" '
             .mediaType == "application/vnd.oci.image.index.v1+json" and
+            (.manifests | length) == 4 and
             ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")] | length) == 1 and
             ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64")] | length) == 1 and
             .annotations["org.opencontainers.image.source"] == $source and
@@ -282,17 +284,18 @@ jobs:
               )
             ' <<<"$attestation_json" >/dev/null
 
-            provenance_json=$(docker buildx imagetools inspect \
-              "$image_repository@$manifest_digest" --format '{{json .Provenance.SLSA}}')
-            jq --exit-status '
-              .buildDefinition.buildType == "https://mobyproject.org/buildkit@v1" and
-              (.buildDefinition.resolvedDependencies | length) > 0 and
+            jq --exit-status --arg platform "linux/$architecture" '
+              .[$platform].SLSA as $slsa |
+              ($slsa != null) and
+              ($slsa.buildDefinition.buildType == "https://mobyproject.org/buildkit@v1" or
+               $slsa.buildDefinition.buildType == "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md") and
+              (($slsa.buildDefinition.resolvedDependencies | length) > 0) and
               all(
-                .buildDefinition.resolvedDependencies[];
+                $slsa.buildDefinition.resolvedDependencies[];
                 (.uri | type == "string" and length > 0) and
                 (.digest.sha256 | type == "string" and test("^[0-9a-f]{64}$"))
               )
-            ' <<<"$provenance_json" >/dev/null
+            ' <<<"$index_provenance_json" >/dev/null
           done
 
           gh attestation verify "oci://$IMAGE_REF" \

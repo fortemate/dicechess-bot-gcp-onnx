@@ -1,0 +1,167 @@
+name: "Ops: Verify Published Image"
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_ref:
+        description: Published image reference (e.g. ghcr.io/fortemate/dicechess-bot-gcp-onnx@sha256:...)
+        required: true
+        type: string
+        default: ghcr.io/fortemate/dicechess-bot-gcp-onnx@sha256:ebf479d1be91cd2401c32547ce3d83dc459dbf30b18ae0a3c36d7685ed92765d
+      expected_source:
+        description: Expected source repository URL
+        required: true
+        type: string
+        default: https://github.com/fortemate/dicechess-bot-gcp-onnx
+      expected_sha:
+        description: Expected source git commit SHA
+        required: true
+        type: string
+        default: a168ca26e076c9286b9ca37bf83f538201c5d578
+      expected_ref:
+        description: Expected git ref (e.g. refs/tags/v0.3.0)
+        required: true
+        type: string
+        default: refs/tags/v0.3.0
+
+permissions: {}
+
+concurrency:
+  group: verify-published-image-${{ inputs.image_ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Verify input formats
+        env:
+          IMAGE_REF: ${{ inputs.image_ref }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          EXPECTED_REF: ${{ inputs.expected_ref }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$IMAGE_REF" =~ ^ghcr\.io/[^@]+@sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::image_ref must be an immutable GHCR digest ref (ghcr.io/...@sha256:...); got '$IMAGE_REF'"
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::expected_sha must be a 40-character hex commit SHA; got '$EXPECTED_SHA'"
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::expected_ref must be a release tag ref (refs/tags/vX.Y.Z); got '$EXPECTED_REF'"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Validate multi-arch index and attestations
+        env:
+          IMAGE_REF: ${{ inputs.image_ref }}
+          EXPECTED_SOURCE: ${{ inputs.expected_source }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          EXPECTED_REF: ${{ inputs.expected_ref }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "$IMAGE_REF"
+          index_json=$(docker buildx imagetools inspect --raw "$IMAGE_REF")
+          index_provenance_json=$(docker buildx imagetools inspect "$IMAGE_REF" --format '{{json .Provenance}}')
+          expected_tag=${EXPECTED_REF#refs/tags/}
+          expected_version=${expected_tag#v}
+          jq --exit-status \
+            --arg source "$EXPECTED_SOURCE" \
+            --arg revision "$EXPECTED_SHA" \
+            --arg version "$expected_version" '
+            .mediaType == "application/vnd.oci.image.index.v1+json" and
+            (.manifests | length) == 4 and
+            ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")] | length) == 1 and
+            ([.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64")] | length) == 1 and
+            .annotations["org.opencontainers.image.source"] == $source and
+            .annotations["org.opencontainers.image.licenses"] == "AGPL-3.0-only" and
+            .annotations["org.opencontainers.image.revision"] == $revision and
+            .annotations["org.opencontainers.image.version"] == $version
+          ' <<<"$index_json" >/dev/null
+
+          image_repository=${IMAGE_REF%@*}
+          for architecture in amd64 arm64; do
+            manifest_digest=$(jq -r --arg architecture "$architecture" '
+              .manifests[] |
+              select(.platform.os == "linux" and .platform.architecture == $architecture) |
+              .digest
+            ' <<<"$index_json")
+            manifest_json=$(docker buildx imagetools inspect --raw "$image_repository@$manifest_digest")
+            jq --exit-status \
+              --arg source "$EXPECTED_SOURCE" \
+              --arg revision "$EXPECTED_SHA" \
+              --arg version "$expected_version" '
+              .mediaType == "application/vnd.oci.image.manifest.v1+json" and
+              .annotations["org.opencontainers.image.source"] == $source and
+              .annotations["org.opencontainers.image.licenses"] == "AGPL-3.0-only" and
+              .annotations["org.opencontainers.image.revision"] == $revision and
+              .annotations["org.opencontainers.image.version"] == $version
+            ' <<<"$manifest_json" >/dev/null
+
+            attestation_digest=$(jq -r --arg manifest_digest "$manifest_digest" '
+              .manifests[] |
+              select(
+                .platform.os == "unknown" and
+                .platform.architecture == "unknown" and
+                .annotations["vnd.docker.reference.type"] == "attestation-manifest" and
+                .annotations["vnd.docker.reference.digest"] == $manifest_digest
+              ) |
+              .digest
+            ' <<<"$index_json" | head -n 1)
+            test -n "$attestation_digest"
+            attestation_json=$(docker buildx imagetools inspect --raw "$image_repository@$attestation_digest")
+            jq --exit-status --arg manifest_digest "$manifest_digest" '
+              .mediaType == "application/vnd.oci.image.manifest.v1+json" and
+              .subject.digest == $manifest_digest and
+              any(
+                .layers[];
+                .mediaType == "application/vnd.in-toto+json" and
+                .annotations["in-toto.io/predicate-type"] == "https://slsa.dev/provenance/v1"
+              ) and
+              any(
+                .layers[];
+                .mediaType == "application/vnd.in-toto+json" and
+                .annotations["in-toto.io/predicate-type"] == "https://spdx.dev/Document"
+              )
+            ' <<<"$attestation_json" >/dev/null
+
+            jq --exit-status --arg platform "linux/$architecture" '
+              .[$platform].SLSA as $slsa |
+              ($slsa != null) and
+              ($slsa.buildDefinition.buildType == "https://mobyproject.org/buildkit@v1" or
+               $slsa.buildDefinition.buildType == "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md") and
+              (($slsa.buildDefinition.resolvedDependencies | length) > 0) and
+              all(
+                $slsa.buildDefinition.resolvedDependencies[];
+                (.uri | type == "string" and length > 0) and
+                (.digest.sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+              )
+            ' <<<"$index_provenance_json" >/dev/null
+          done
+
+          gh attestation verify "oci://$IMAGE_REF" \
+            --repo "${EXPECTED_SOURCE#https://github.com/}" \
+            --source-digest "$EXPECTED_SHA" \
+            --source-ref "$EXPECTED_REF"
