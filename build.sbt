@@ -31,7 +31,7 @@ ThisBuild / developers := List(
 )
 
 // Both Fortemate libraries are public Maven Central artifacts; no repository credentials are required.
-val DiceChessEngineVersion     = "0.6.0"
+val DiceChessEngineVersion     = "0.8.1"
 val DiceChessBotRuntimeVersion = "1.0.1"
 val CirceVersion               = "0.14.16"
 val MunitVersion               = "1.3.5"
