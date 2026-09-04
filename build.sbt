@@ -7,7 +7,7 @@ ThisBuild / organizationHomepage := Some(uri("https://fortemate.com"))
 ThisBuild / homepage             := Some(uri("https://fortemate.com"))
 ThisBuild / startYear            := Some(2026)
 ThisBuild / version              := "0.1.0-SNAPSHOT"
-ThisBuild / scalaVersion         := "3.8.4"
+ThisBuild / scalaVersion         := "3.9.0"
 
 ThisBuild / description :=
   "Dice Chess webhook bot for Google Cloud Run, powered by ONNX 2-ply expectimax search and an opening book."
