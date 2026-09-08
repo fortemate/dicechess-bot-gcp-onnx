@@ -18,7 +18,7 @@ RUN sbt update
 
 COPY src/main/ src/main/
 RUN sbt assembly \
-    && cp target/out/jvm/*/dicechess-bot-gcp-onnx/dicechess-bot-gcp-onnx.jar /build/app.jar
+    && cp target/dicechess-bot-gcp-onnx.jar /build/app.jar
 
 # Pin the Ubuntu 24.04 runtime manifest so releases cannot silently drift between base images.
 FROM eclipse-temurin:25-jre-noble@sha256:fbcf915c585659b30eb766ada4d6d7cfc9ec1040bf521e95bf61b10a25af73db

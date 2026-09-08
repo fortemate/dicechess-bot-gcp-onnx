@@ -81,7 +81,7 @@ lazy val root = (project in file("."))
     }.value,
     assembly / mainClass             := Some("com.fortemate.dicechess.bot.Main"),
     assembly / assemblyJarName       := "dicechess-bot-gcp-onnx.jar",
-    assembly / assemblyOutputPath    := target.value / "dicechess-bot-gcp-onnx.jar",
+    assembly / assemblyOutputPath    := baseDirectory.value / "target" / "dicechess-bot-gcp-onnx.jar",
     assembly / assemblyMergeStrategy := {
       case PathList("META-INF", xs @ _*) if xs.nonEmpty && {
             val name = xs.last.toLowerCase

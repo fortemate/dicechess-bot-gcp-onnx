@@ -59,7 +59,7 @@ jobs:
           set -euo pipefail
           DICECHESS_WEBHOOK_SECRET=smoke PORT=8099 \
             java --enable-native-access=ALL-UNNAMED \
-              -jar target/out/jvm/scala-3.8.4/dicechess-bot-gcp-onnx/dicechess-bot-gcp-onnx.jar &
+              -jar target/dicechess-bot-gcp-onnx.jar &
           app_pid=$!
           trap 'kill "$app_pid" 2>/dev/null || true' EXIT
           response=""
