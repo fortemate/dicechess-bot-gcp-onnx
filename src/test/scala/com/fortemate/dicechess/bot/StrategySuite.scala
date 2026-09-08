@@ -21,6 +21,7 @@ import scala.jdk.CollectionConverters.*
   */
 class StrategySuite extends munit.FunSuite:
 
+  private val pdiSchema      = "rich-pdi-11-v1"
   private val syntheticModel = Strategy.syntheticModelPath()
   private val initialNbk     = FenParser.InitialPosition + " NBK"
   private val fixedCorpus    = List(
@@ -393,7 +394,7 @@ class StrategySuite extends munit.FunSuite:
 
   test("PDI selector preserves rich prefix and explicit evaluation perspective"):
     val state     = FenParser.parse("4k3/pp6/8/8/3Q4/8/PP6/R3K3 b - - 0 1").toOption.get
-    val extractor = Strategy.extractorFor("rich-pdi-11-v1")
+    val extractor = Strategy.extractorFor(pdiSchema)
     for color <- List(Color.White, Color.Black) do
       assertEquals(extractor(state, color).length, 11)
       assertEquals(extractor(state, color).take(9).toList, RichFeatures.extract(state, color).toList)
@@ -402,7 +403,7 @@ class StrategySuite extends munit.FunSuite:
 
   test("unknown feature schema fails instead of selecting a different model contract"):
     val error = intercept[RuntimeException](Strategy.extractorFor("pdi"))
-    assert(error.getMessage.contains("rich-pdi-11-v1"))
+    assert(error.getMessage.contains(pdiSchema))
 
   test("eleven-input PDI model returns legal turns with and without the opening book"):
     val resource = Option(getClass.getResource("/synthetic_pdi_test_model.onnx")).get
@@ -412,7 +413,7 @@ class StrategySuite extends munit.FunSuite:
       var searchCalls = 0
       val strategy    = new Strategy(
         model,
-        Strategy.extractorFor("rich-pdi-11-v1"),
+        Strategy.extractorFor(pdiSchema),
         candidateLimit = 4,
         overheadBufferMs = 5,
         defaultThinkMs = 100,
