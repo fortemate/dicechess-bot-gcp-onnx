@@ -48,7 +48,7 @@ so the budget **widens the candidate set** (and prevents flagging) rather than d
 | `BOT_PROFILE` | `legacy` | `legacy` preserves independent env configuration; `hybrid-star2-v1` atomically requires the documented production search, artifacts, identity, and immutable provenance. |
 | `MODEL_PATH` | *(synthetic)* | Path to the mounted ONNX value model, e.g. `/models/oracle-3.onnx`. |
 | `OPENING_BOOK_PATH` | bundled 5-entry sample | Path to a privately mounted TSV opening book, e.g. `/models/opening_book.tsv`. |
-| `ORACLE_FEATURES` | `rich` | Feature extractor the model was trained on: `material` (7), `rich` (9), `kcp` (13). |
+| `ORACLE_FEATURES` | `rich` | Feature extractor the model was trained on: `material` (7), `rich` (9), `kcp` (13), `rich-pdi-11-v1` (11). |
 | `SEARCH_MODE` | `expectimax` | `expectimax` for 2-ply search or `one-ply` for direct model evaluation. |
 | `TIME_POLICY` | `empirical-v1` | `empirical-v1` (production Dice Chess data) or `legacy-linear-v1`. |
 | `ORACLE_CANDIDATE_LIMIT` | engine default | Expectimax candidate width. |
@@ -237,3 +237,24 @@ unset BOT_TOKEN
 
 Full platform reference: <https://fortemate.github.io/dicechess-bot-runtime/>. Review the current
 Cloud Run and Cloud Storage pricing before deployment; Google Cloud requires a billing account.
+
+### PDI model with an opening book
+
+Use `BOT_PROFILE=legacy`, `ORACLE_FEATURES=rich-pdi-11-v1` and an externally mounted
+11-input ONNX model in `MODEL_PATH`. The engine 0.9.1 extractor preserves the rich-9
+prefix and appends `own_pdi`, `opponent_pdi`: the number of present pawn, knight,
+bishop, rook and queen types divided by five, ordered by evaluation perspective.
+This measures presence, not legal mobility. Do not use the rich-9-only
+`hybrid-star2-v1` profile for this model.
+
+Set `OPENING_BOOK_PATH` to the private TSV book and pin both artifact hashes with
+`MODEL_SHA256` and `OPENING_BOOK_SHA256`. The book supplies a turn for a matching
+position and dice roll; a miss falls back to the PDI search. Book coverage and
+playing strength must be measured separately. Keep trained weights and production
+books outside this public repository.
+
+For two concurrent games, provision and load-test independent replicas: one Strategy
+serializes search and shares its time budget with queued requests. Advertising two
+slots alone does not create two search workers. On a Raspberry Pi, measure memory,
+latency and thermal behavior with both replicas and existing services running before
+opening human and ladder admission.
