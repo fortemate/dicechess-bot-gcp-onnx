@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 
+# Builder digest: eclipse-temurin:25-jdk-noble.
 # JVM bytecode is architecture-independent, so the build runs once on BuildKit's native platform.
-FROM --platform=$BUILDPLATFORM eclipse-temurin:25-jdk-noble@sha256:534968c051301957beae735e7ba1db54d99ddecf08746d3b9d4f318cc132dbc3 AS build
+FROM --platform=$BUILDPLATFORM eclipse-temurin@sha256:534968c051301957beae735e7ba1db54d99ddecf08746d3b9d4f318cc132dbc3 AS build
 
 ARG SBT_VERSION=2.0.6
 ARG SBT_SHA256=60ce78a50b726b5b332a5277e363d67c028f16a3a15157f78a416c0b2949bc6d
@@ -21,7 +22,7 @@ RUN sbt assembly \
     && cp target/dicechess-bot-gcp-onnx.jar /build/app.jar
 
 # Pin the Ubuntu 24.04 runtime manifest so releases cannot silently drift between base images.
-FROM eclipse-temurin:25-jre-noble@sha256:fbcf915c585659b30eb766ada4d6d7cfc9ec1040bf521e95bf61b10a25af73db
+FROM eclipse-temurin@sha256:fbcf915c585659b30eb766ada4d6d7cfc9ec1040bf521e95bf61b10a25af73db
 
 LABEL org.opencontainers.image.title="Dice Chess ONNX webhook bot" \
       org.opencontainers.image.description="ONNX expectimax Dice Chess bot with model pre-ranking, Star pruning, TT, and root rescoring" \
