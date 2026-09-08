@@ -1,8 +1,9 @@
 package com.fortemate.dicechess.bot
 
-import dicechess.engine.domain.FenParser
+import dicechess.engine.domain.{Color, FenParser}
 import dicechess.engine.search.{
   OnnxFeatures,
+  RichFeatures,
   OpeningBookParser,
   RootRescoreModel,
   RootSearchStats,
@@ -389,3 +390,40 @@ class StrategySuite extends munit.FunSuite:
         executor.shutdown()
         executor.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)
     }
+
+  test("PDI selector preserves rich prefix and explicit evaluation perspective"):
+    val state     = FenParser.parse("4k3/pp6/8/8/3Q4/8/PP6/R3K3 b - - 0 1").toOption.get
+    val extractor = Strategy.extractorFor("rich-pdi-11-v1")
+    for color <- List(Color.White, Color.Black) do
+      assertEquals(extractor(state, color).length, 11)
+      assertEquals(extractor(state, color).take(9).toList, RichFeatures.extract(state, color).toList)
+    assertEquals(extractor(state, Color.White).drop(9).toList, List(0.6f, 0.2f))
+    assertEquals(extractor(state, Color.Black).drop(9).toList, List(0.2f, 0.6f))
+
+  test("unknown feature schema fails instead of selecting a different model contract"):
+    val error = intercept[RuntimeException](Strategy.extractorFor("pdi"))
+    assert(error.getMessage.contains("rich-pdi-11-v1"))
+
+  test("eleven-input PDI model returns legal turns with and without the opening book"):
+    val resource = Option(getClass.getResource("/synthetic_pdi_test_model.onnx")).get
+    val model    = java.nio.file.Paths.get(resource.toURI).toString
+    val dfen     = "r1bqkbnr/pppppppp/2n5/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 2 BKP"
+    for book <- List(Map.empty[String, String], Strategy.loadOpeningBook(None)) do
+      var searchCalls = 0
+      val strategy    = new Strategy(
+        model,
+        Strategy.extractorFor("rich-pdi-11-v1"),
+        candidateLimit = 4,
+        overheadBufferMs = 5,
+        defaultThinkMs = 100,
+        openingBook = book,
+        statsSink = _ => searchCalls += 1
+      )
+      try
+        val moves = strategy.chooseMoves(dfen, Some(100L), 2000L)
+        assert(legalPaths(dfen).contains(moves))
+        if book.nonEmpty then
+          assertEquals(moves, List("e2e4", "f1c4", "e1f1"))
+          assertEquals(searchCalls, 0)
+        else assertEquals(searchCalls, 1)
+      finally strategy.close()

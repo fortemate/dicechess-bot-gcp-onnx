@@ -11,6 +11,7 @@ import dicechess.engine.search.{
   OpeningBookBot,
   OpeningBookParser,
   RichFeatures,
+  RichPdiFeatures,
   RootRescoreModel,
   RootSearchStats,
   SearchAlgorithm,
@@ -220,11 +221,12 @@ object Strategy:
         )
 
   /** The feature extractor the model was trained on — must match the ONNX file. */
-  private def extractorFor(name: String): (GameState, Color) => Array[Float] = name.toLowerCase match
-    case "rich"          => RichFeatures.extract
-    case "kcp"           => KcpFeatures.extract
-    case "material" | "" => OnnxFeatures.extract
-    case other           => sys.error(s"unknown ORACLE_FEATURES '$other' (expected material|rich|kcp)")
+  private[bot] def extractorFor(name: String): (GameState, Color) => Array[Float] = name.toLowerCase match
+    case "rich-pdi-11-v1" => RichPdiFeatures.extract
+    case "rich"           => RichFeatures.extract
+    case "kcp"            => KcpFeatures.extract
+    case "material" | ""  => OnnxFeatures.extract
+    case other            => sys.error(s"unknown ORACLE_FEATURES '$other' (expected material|rich|kcp|rich-pdi-11-v1)")
 
   /** Production wiring. `MODEL_PATH` points at the mounted ONNX model (`ORACLE_FEATURES=rich` for the `oracle-3`
     * weights); unset falls back to the bundled synthetic model so the bot still boots and plays legal — if signal-free
