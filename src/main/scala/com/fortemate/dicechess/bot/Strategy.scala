@@ -1,5 +1,16 @@
 package com.fortemate.dicechess.bot
 
+import com.fortemate.dicechess.runtime.{
+  BotStrategy,
+  DoubleDecisionContext,
+  DoubleOfferAction,
+  DoubleOpportunityContext,
+  DoubleResponseAction,
+  DrawAction,
+  DrawDecisionContext,
+  TurnAction,
+  TurnContext
+}
 import dicechess.engine.domain.{Color, FenParser, GameState, Move}
 import dicechess.engine.search.{
   ClockState,
@@ -22,10 +33,14 @@ import dicechess.engine.search.{
 }
 
 import java.nio.file.{Files, StandardCopyOption}
+import scala.jdk.CollectionConverters.*
 import scala.util.Random
 
 /** The move-choosing brain: either the engine's ONNX-backed 2-ply expectimax ([[OnnxExpectimaxSearch]]) or its direct
   * one-ply evaluator ([[OnnxEvalSearch]]), decorated with the exported opening book and driven by the game clock.
+  *
+  * Implements the runtime v2 [[BotStrategy]] interface directly for typed turns, draw decisions, and stake-doubling
+  * opportunities and responses.
   *
   * Time management is not reinvented: an engine [[dicechess.engine.search.TimeManager]] maps the clock to a per-turn
   * budget, and the book decorator preserves the time-budget capability, so the deadline reaches the underlying search.
@@ -34,8 +49,8 @@ import scala.util.Random
   * The trained model is a **runtime input**, never in this repo: `modelPath` points at a mounted ONNX value model, and
   * `extractFeatures` must match the features it was trained on (house `oracle-3` = [[RichFeatures]], 9 columns). One
   * ONNX session is created here and reused. The v0.5 expectimax search and its transposition table are single-writer;
-  * calls to [[chooseMoves]] are therefore serialized per Strategy instance. Independent replicas keep independent
-  * sessions and tables. Call [[close]] to release the session.
+  * calls to [[chooseMoves]] / [[onTurn]] are therefore serialized per Strategy instance. Independent replicas keep
+  * independent sessions and tables. Call [[close]] to release the session.
   *
   * `rootRescore`, when set, mounts a *second* ONNX model (a [[KcpFeatures]]-trained one) that rescores only the top
   * root candidates — the affordable way to bring the king/queen capture-probability signal into play: the 9-feature
@@ -56,8 +71,20 @@ final class Strategy(
     statsSink: RootSearchStats => Unit = Strategy.logSearchStats,
     preRankWithModel: Boolean = false,
     tt: Option[TranspositionTable] = None,
-    random: Random = new Random()
-) extends AutoCloseable:
+    random: Random = new Random(),
+    customBot: Option[SearchAlgorithm] = None
+) extends BotStrategy
+    with AutoCloseable:
+
+  private[bot] def this(bot: SearchAlgorithm) =
+    this(
+      modelPath = Strategy.syntheticModelPath(),
+      extractFeatures = OnnxFeatures.extract,
+      candidateLimit = 4,
+      overheadBufferMs = 5,
+      defaultThinkMs = 200,
+      customBot = Some(bot)
+    )
 
   require(
     searchMode == Strategy.SearchMode.Expectimax || rootRescore.isEmpty,
@@ -76,7 +103,93 @@ final class Strategy(
         tt = tt
       )
     case Strategy.SearchMode.OnePly => new OnnxEvalSearch(modelPath, extractFeatures)
-  private val bot: SearchAlgorithm = OpeningBookBot.decorate(onnx, openingBook)
+  private[bot] val bot: SearchAlgorithm = customBot.getOrElse(OpeningBookBot.decorate(onnx, openingBook))
+
+  override def onTurn(ctx: TurnContext): TurnAction =
+    val clock     = Option(ctx.clock())
+    val remaining = clock.map(_.remainingMillis())
+    val increment = clock.flatMap(c => Option(c.incrementMillis())).fold(0L)(_.longValue)
+    chooseTurn(ctx.dfen(), remaining, increment, ctx.mayOfferDraw())
+
+  override def onDrawDecision(ctx: DrawDecisionContext): DrawAction =
+    if shouldAcceptDraw(ctx.dfen(), ctx.seat()) then DrawAction.accept()
+    else DrawAction.decline()
+
+  override def onDoubleOpportunity(ctx: DoubleOpportunityContext): DoubleOfferAction =
+    if shouldOfferDouble(ctx.dfen(), ctx.seat(), Strategy.currentMultiplier(ctx)) then DoubleOfferAction.offer()
+    else DoubleOfferAction.roll()
+
+  override def onDoubleDecision(ctx: DoubleDecisionContext): DoubleResponseAction =
+    if shouldAcceptDouble(ctx.dfen(), ctx.seat(), Strategy.proposedMultiplier(ctx)) then DoubleResponseAction.accept()
+    else DoubleResponseAction.decline()
+
+  /** Evaluates a turn with time management and optional draw offer. Fails closed on invalid DFEN or search error. */
+  def chooseTurn(
+      dfen: String,
+      remainingMillis: Option[Long],
+      incrementMillis: Long,
+      mayOfferDraw: Boolean
+  ): TurnAction =
+    val receivedNanos = System.nanoTime()
+    this.synchronized {
+      FenParser.parse(dfen) match
+        case Left(reason) =>
+          System.err.println(s"[bot] unusable dfen: $reason")
+          TurnAction(java.util.List.of(), false)
+        case Right(state) =>
+          try
+            val budgetMs = remainingMillis match
+              case Some(remaining) if remaining > 0 =>
+                timeManager.budgetMs(ClockState(remaining, incrementMillis, state.fullMoveNumber), overheadBufferMs)
+              case _ => defaultThinkMs
+            val boundedBudgetMs = budgetMs.max(1L).min(Strategy.MaxBudgetMs)
+            val deadlineNanos   = receivedNanos + boundedBudgetMs * 1_000_000L
+            val scored          = bot match
+              case tb: TimeBudgetedSearch => tb.findBestMove(state, deadlineNanos, random)
+              case other                  => other.findBestMove(state)
+            val moves     = scored.map(_.moves.map(Strategy.toUci)).getOrElse(Nil)
+            val offerDraw = mayOfferDraw && bot.shouldOfferDraw(state)
+            TurnAction(moves.asJava, offerDraw)
+          catch
+            case scala.util.control.NonFatal(ex) =>
+              System.err.println(s"[bot] turn evaluation failed: ${ex.getMessage}")
+              TurnAction(java.util.List.of(), false)
+    }
+
+  /** Evaluates whether to accept an incoming draw offer from the bot's active-color perspective. */
+  def shouldAcceptDraw(dfen: String, seat: String): Boolean =
+    withParsedBotState(dfen, seat, "onDrawDecision", fallback = false) { botState =>
+      bot.shouldAcceptDraw(botState)
+    }
+
+  /** Evaluates whether to offer a double with the current stake multiplier and bot active-color perspective. */
+  def shouldOfferDouble(dfen: String, seat: String, currentMultiplier: Int): Boolean =
+    withParsedBotState(dfen, seat, "onDoubleOpportunity", fallback = false) { botState =>
+      bot.shouldOfferDouble(botState, currentMultiplier)
+    }
+
+  /** Evaluates whether to accept an opponent's double offer with proposed multiplier and bot perspective. */
+  def shouldAcceptDouble(dfen: String, seat: String, proposedMultiplier: Int): Boolean =
+    withParsedBotState(dfen, seat, "onDoubleDecision", fallback = false) { botState =>
+      bot.shouldAcceptDouble(botState, proposedMultiplier)
+    }
+
+  private def withParsedBotState[A](
+      dfen: String,
+      seat: String,
+      contextName: String,
+      fallback: A
+  )(f: GameState => A): A =
+    FenParser.parse(dfen) match
+      case Left(reason) =>
+        System.err.println(s"[bot] unusable dfen in $contextName: $reason")
+        fallback
+      case Right(state) =>
+        try f(state.withActiveColor(Strategy.seatToColor(seat)))
+        catch
+          case scala.util.control.NonFatal(ex) =>
+            System.err.println(s"[bot] policy evaluation failed in $contextName: ${ex.getMessage}")
+            fallback
 
   /** DFEN in, UCI micro-move path out. `Nil` = nothing to play (forced pass or unusable DFEN).
     *
@@ -85,24 +198,7 @@ final class Strategy(
     * an accidentally concurrent caller cannot wait in the queue and then spend a fresh full clock budget.
     */
   def chooseMoves(dfen: String, remainingMillis: Option[Long], incrementMillis: Long): List[String] =
-    val receivedNanos = System.nanoTime()
-    this.synchronized {
-      FenParser.parse(dfen) match
-        case Left(reason) =>
-          System.err.println(s"[bot] unusable dfen: $reason")
-          Nil
-        case Right(state) =>
-          val budgetMs = remainingMillis match
-            case Some(remaining) if remaining > 0 =>
-              timeManager.budgetMs(ClockState(remaining, incrementMillis, state.fullMoveNumber), overheadBufferMs)
-            case _ => defaultThinkMs
-          val boundedBudgetMs = budgetMs.max(1L).min(Strategy.MaxBudgetMs)
-          val deadlineNanos   = receivedNanos + boundedBudgetMs * 1_000_000L
-          val scored          = bot match
-            case tb: TimeBudgetedSearch => tb.findBestMove(state, deadlineNanos, random)
-            case other                  => other.findBestMove(state)
-          scored.map(_.moves.map(Strategy.toUci)).getOrElse(Nil)
-    }
+    chooseTurn(dfen, remainingMillis, incrementMillis, mayOfferDraw = false).moves().asScala.toList
 
   def close(): Unit = this.synchronized(onnx.close())
 
@@ -159,6 +255,20 @@ object Strategy:
       overheadMs: Long,
       defaultThinkMs: Long
   )
+
+  /** Map seat name ("White" or "Black") to the engine's internal [[Color]] (`Color.White` / `Color.Black`). */
+  def seatToColor(seat: String | Null): Color =
+    if Option(seat).exists(_.equalsIgnoreCase("Black")) then Color.Black else Color.White
+
+  /** Compute current stake multiplier relative to initial stake (or fallback to cubeValue). */
+  def currentMultiplier(ctx: DoubleOpportunityContext): Int =
+    if ctx.initialStake() > 0 then (ctx.currentStake() / ctx.initialStake()).toInt
+    else ctx.cubeValue()
+
+  /** Compute proposed stake multiplier relative to initial stake (or fallback to cubeValue * 2). */
+  def proposedMultiplier(ctx: DoubleDecisionContext): Int =
+    if ctx.initialStake() > 0 then (ctx.proposedStake() / ctx.initialStake()).toInt
+    else ctx.cubeValue() * 2
 
   /** UCI for a search-layer `Move` — the same recipe play-api's `EngineOps` uses. */
   def toUci(move: Move): String =
