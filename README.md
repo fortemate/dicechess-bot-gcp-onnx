@@ -44,7 +44,8 @@ so the budget **widens the candidate set** (and prevents flagging) rather than d
 
 | Env var | Default | Meaning |
 | --- | --- | --- |
-| `DICECHESS_WEBHOOK_SECRET` | *(required)* | Per-bot webhook signing secret. Empty or absent values fail startup. |
+| `DICECHESS_WEBHOOK_SECRET` | *(conditional)* | Active per-bot webhook signing secret. May be absent only during pending-only initial registration. |
+| `DICECHESS_WEBHOOK_NEXT_SECRET` | *(conditional)* | Pending per-bot webhook signing secret for initial registration, key rotation, and `verification-v2` proof. At least one webhook key is required. |
 | `BOT_PROFILE` | `legacy` | `legacy` preserves independent env configuration; `hybrid-star2-v1` atomically requires the documented production search, artifacts, identity, and immutable provenance. |
 | `MODEL_PATH` | *(synthetic)* | Path to the mounted ONNX value model, e.g. `/models/oracle-3.onnx`. |
 | `OPENING_BOOK_PATH` | bundled 5-entry sample | Path to a privately mounted TSV opening book, e.g. `/models/opening_book.tsv`. |
@@ -115,6 +116,16 @@ The exact `doubling` capability name is reserved by the platform and is not sele
 already implements the typed runtime v2 doubling decisions, but operators must not add `doubling`
 to a registration until the play-api makes it selectable. `turn`, `draw`, and `double` are not valid
 registration capability names.
+
+### Initial registration and dual-key rotation
+
+The session API creates the candidate secret and shows it exactly once. Store that response through the approved secret channel before configuring the endpoint or requesting activation.
+
+- **Initial registration:** start the endpoint with only `DICECHESS_WEBHOOK_NEXT_SECRET`. Activate the candidate, then read the authoritative slot from play-api. Only after its new `registrationId` and revision are visible, move that value to `DICECHESS_WEBHOOK_SECRET` and unset `DICECHESS_WEBHOOK_NEXT_SECRET` in the bot deployment.
+- **Rotation or URL replacement:** keep the current `DICECHESS_WEBHOOK_SECRET` and add the one-time candidate value as `DICECHESS_WEBHOOK_NEXT_SECRET`. Verification-v2 uses only the pending key, while ordinary deliveries accept either key during the transition. Activation commits the candidate registration and secret atomically in play-api; there is no separate operator-side promotion in play-api.
+- **Retirement:** after an authoritative slot `GET` confirms the new `registrationId` and revision, promote the pending value only in the bot deployment and remove the old active value. If activation fails or its response is lost, keep the old active value until authoritative readback resolves the outcome.
+
+The bot never auto-promotes a pending key after answering verification-v2.
 
 > **Operational Note**: Release publication, Cloud Run deployment, webhook re-registration, secret rotation, and capability enablement on the live platform are separate human-owned administrative steps.
 

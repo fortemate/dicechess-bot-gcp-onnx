@@ -149,6 +149,7 @@ jobs:
             --cap-drop ALL --security-opt no-new-privileges:true \
             --memory 1g --memory-swap 1g --cpus 2 \
             --env DICECHESS_WEBHOOK_SECRET=smoke \
+            --env DICECHESS_WEBHOOK_NEXT_SECRET=smoke-next \
             --env DEFAULT_THINK_MS=200 \
             --env SEARCH_MODE=expectimax \
             --env PRE_RANK_WITH_MODEL=true \
@@ -169,6 +170,19 @@ jobs:
             sleep 1
           done
           jq --exit-status '.nonce == "container-smoke"' <<<"$response"
+
+          verification_body='{"type":"verification","version":2,"nonce":"AAAAAAAAAAAAAAAAAAAAAA","bot":{"team":"ci","name":"smoke"},"setupId":"setup-smoke","revision":"revision-smoke"}'
+          verification_timestamp=$(date +%s)
+          verification_signature=$(printf '%s' "${verification_timestamp}.${verification_body}" | openssl dgst -sha256 -hmac smoke-next -hex | awk '{print $2}')
+          verification=$(curl --fail --silent --show-error \
+            --request POST http://127.0.0.1:8099/api/webhook \
+            --header "Content-Type: application/json" \
+            --header "x-dicechess-timestamp: $verification_timestamp" \
+            --header "x-dicechess-signature: $verification_signature" \
+            --data "$verification_body")
+          expected_proof=$(printf 'dicechess-webhook-activate-v2\n%s' "$verification_body" | openssl dgst -sha256 -hmac smoke-next -hex | awk '{print $2}')
+          jq --exit-status --arg expected "$expected_proof" \
+            '.nonce == "AAAAAAAAAAAAAAAAAAAAAA" and .proof == $expected' <<<"$verification"
 
           body='{"type":"yourTurn","gameId":"smoke-game","seat":"White","state":{"version":1,"activeSeat":"White","dicePending":true,"dfen":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1 NBK","clocks":{"white":5000,"black":5000},"timeControl":{"Fischer":{"initialSeconds":300,"incrementSeconds":3}}}}'
           timestamp=$(date +%s)

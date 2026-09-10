@@ -1,6 +1,6 @@
 package com.fortemate.dicechess.bot
 
-import com.fortemate.dicechess.runtime.{Signatures, WebhookHandler}
+import com.fortemate.dicechess.runtime.{Signatures, WebhookHandler, WebhookKeys}
 import dicechess.engine.domain.FenParser
 import dicechess.engine.search.{OnnxFeatures, TurnGenerator}
 import io.circe.parser.parse
@@ -15,12 +15,17 @@ import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 class MainSuite extends munit.FunSuite:
 
   private val Secret         = "test-webhook-secret"
+  private val ActiveSecret   = "active-sec"
+  private val PendingSecret  = "pending-sec"
+  private val MissingKeys    = "At least one webhook signing secret must be set and non-empty"
   private val syntheticModel = Strategy.syntheticModelPath()
   private val initialNbk     = FenParser.InitialPosition + " NBK"
   private val noDiceFen      = FenParser.InitialPosition
 
-  private def withServer(strat: Strategy)(testCode: (HttpClient, String) => Unit): Unit =
-    val server = Main.start(port = 0, secret = Secret, strategy = strat)
+  private def withServer(strat: Strategy, keys: WebhookKeys = WebhookKeys.activeOnly(Secret))(
+      testCode: (HttpClient, String) => Unit
+  ): Unit =
+    val server = Main.start(port = 0, keys = keys, strategy = strat)
     try
       val base   = s"http://127.0.0.1:${server.getAddress.getPort}/api/webhook"
       val client = HttpClient.newHttpClient()
@@ -66,6 +71,31 @@ class MainSuite extends munit.FunSuite:
       overheadBufferMs = 5,
       defaultThinkMs = 200
     )
+
+  test("resolveWebhookKeys handles every runtime-v2 key state and rejects an empty configuration"):
+    val activeOnly = Main.resolveWebhookKeys(Map("DICECHESS_WEBHOOK_SECRET" -> "sec-1"))
+    assertEquals(activeOnly.active(), "sec-1")
+    assertEquals(Option(activeOnly.pending()), None)
+
+    val dual = Main.resolveWebhookKeys(
+      Map("DICECHESS_WEBHOOK_SECRET" -> "sec-1", "DICECHESS_WEBHOOK_NEXT_SECRET" -> "sec-2")
+    )
+    assertEquals(dual.active(), "sec-1")
+    assertEquals(dual.pending(), "sec-2")
+
+    val pendingOnly = Main.resolveWebhookKeys(Map("DICECHESS_WEBHOOK_NEXT_SECRET" -> "sec-2"))
+    assertEquals(Option(pendingOnly.active()), None)
+    assertEquals(pendingOnly.pending(), "sec-2")
+
+    interceptMessage[RuntimeException](MissingKeys) {
+      Main.resolveWebhookKeys(Map.empty)
+    }
+    interceptMessage[RuntimeException](MissingKeys) {
+      Main.resolveWebhookKeys(Map("DICECHESS_WEBHOOK_SECRET" -> "   "))
+    }
+    interceptMessage[RuntimeException](MissingKeys) {
+      Main.resolveWebhookKeys(Map("DICECHESS_WEBHOOK_NEXT_SECRET" -> "   "))
+    }
 
   test("production entry point rejects an absent or empty webhook secret"):
     interceptMessage[RuntimeException]("DICECHESS_WEBHOOK_SECRET must be set and non-empty") {
@@ -294,4 +324,58 @@ class MainSuite extends munit.FunSuite:
 
       val unknownType = postSigned(client, url, """{"type":"unknownKind","gameId":"g1"}""")
       assertEquals(unknownType.statusCode(), 400)
+    }
+
+  test("end to end over real HTTP: verification-v2 proof uses only pending key when configured"):
+    val keys = WebhookKeys.activeAndPending(ActiveSecret, PendingSecret)
+    withServer(createSyntheticStrategy(), keys) { (client, url) =>
+      val validNonce = "AAAAAAAAAAAAAAAAAAAAAA" // 22 chars unpadded base64url of 16 zero bytes
+      val v2Payload  =
+        s"""{"type":"verification","version":2,"nonce":"$validNonce","bot":{"team":"t","name":"b"},"setupId":"s1","revision":"r1"}"""
+
+      val res = postSigned(client, url, v2Payload, secret = PendingSecret)
+      assertEquals(res.statusCode(), 200)
+
+      val json  = parse(res.body()).toOption.get
+      val proof = json.hcursor.get[String]("proof").toOption.get
+      assertEquals(proof, Signatures.activationProof(PendingSecret, v2Payload))
+
+      val badRes = postSigned(client, url, v2Payload, secret = ActiveSecret)
+      assertEquals(badRes.statusCode(), 401)
+    }
+
+  test("end to end over real HTTP: pending-only bootstrap answers verification-v2"):
+    val keys = WebhookKeys.pendingOnly(PendingSecret)
+    withServer(createSyntheticStrategy(), keys) { (client, url) =>
+      val validNonce = "AAAAAAAAAAAAAAAAAAAAAA"
+      val v2Payload  =
+        s"""{"type":"verification","version":2,"nonce":"$validNonce","bot":{"team":"t","name":"b"},"setupId":"s1","revision":"r1"}"""
+
+      val res = postSigned(client, url, v2Payload, secret = PendingSecret)
+      assertEquals(res.statusCode(), 200)
+      val proof = parse(res.body()).toOption.get.hcursor.get[String]("proof").toOption.get
+      assertEquals(proof, Signatures.activationProof(PendingSecret, v2Payload))
+
+      val wrongKey = postSigned(client, url, v2Payload, secret = ActiveSecret)
+      assertEquals(wrongKey.statusCode(), 401)
+    }
+
+  test("end to end over real HTTP: ordinary delivery accepts either active or pending key during transition"):
+    val keys = WebhookKeys.activeAndPending(ActiveSecret, PendingSecret)
+    withServer(createSyntheticStrategy(), keys) { (client, url) =>
+      val body = TestHelpers.makeEnvelope(
+        "yourTurn",
+        "White",
+        initialNbk,
+        TestHelpers.StateOptions(dicePending = true)
+      )
+
+      val activeTurn = postSigned(client, url, body, secret = ActiveSecret)
+      assertEquals(activeTurn.statusCode(), 200)
+
+      val pendingTurn = postSigned(client, url, body, secret = PendingSecret)
+      assertEquals(pendingTurn.statusCode(), 200)
+
+      val wrongTurn = postSigned(client, url, body, secret = "wrong-sec")
+      assertEquals(wrongTurn.statusCode(), 401)
     }
