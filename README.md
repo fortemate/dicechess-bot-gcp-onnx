@@ -105,12 +105,16 @@ This bot consumes `com.fortemate:dicechess-bot-runtime` **2.0.0** and implements
 - **Doubling Opportunities (`onDoubleOpportunity`)**: Evaluates stake-doubling opportunities before rolling (`shouldOfferDouble`), matching active-color perspective and current stake multiplier.
 - **Doubling Decisions (`onDoubleDecision`)**: Evaluates incoming double offers from opponents (`shouldAcceptDouble`), matching active-color perspective and proposed stake multiplier.
 
-### Required Webhook Capabilities
+### Webhook registration capabilities
 
-When registering or updating this bot on the Dice Chess platform, configure the following webhook capabilities:
-- `turn` — Normal turn move selection and draw offering.
-- `draw` — Pre-roll draw decision evaluation.
-- `double` — Pre-roll stake doubling opportunity and response evaluation.
+Normal `yourTurn` deliveries, including an `offerDraw` turn action when the delivery permits it,
+require no opt-in capability. To receive separate draw-decision deliveries, register the bot with
+the exact `draws` capability.
+
+The exact `doubling` capability name is reserved by the platform and is not selectable yet. The bot
+already implements the typed runtime v2 doubling decisions, but operators must not add `doubling`
+to a registration until the play-api makes it selectable. `turn`, `draw`, and `double` are not valid
+registration capability names.
 
 > **Operational Note**: Release publication, Cloud Run deployment, webhook re-registration, secret rotation, and capability enablement on the live platform are separate human-owned administrative steps.
 
