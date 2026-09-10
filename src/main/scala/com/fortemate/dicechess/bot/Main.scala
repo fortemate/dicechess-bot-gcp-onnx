@@ -1,17 +1,20 @@
 package com.fortemate.dicechess.bot
 
 import com.sun.net.httpserver.HttpServer
-import com.fortemate.dicechess.runtime.{CustomHandlerServer, WebhookHandler}
+import com.fortemate.dicechess.runtime.{CustomHandlerServer, WebhookHandler, WebhookKeys}
 
 import java.util.concurrent.CountDownLatch
+import scala.jdk.CollectionConverters.*
 
 /** The Cloud Run entry point. All webhook/HTTP-server plumbing — HMAC verification, the ownership handshake, the JDK
   * `HttpServer` — lives in `dicechess-bot-runtime`; this object wires our engine-backed, clock-aware [[Strategy]]
   * directly into it and binds the port Cloud Run gives us.
   *
+  * Runtime-v2 key resolution accepts a pending signing key so a fresh session-managed registration can answer
+  * verification-v2 before promotion, and an existing registration can rotate keys without interrupting deliveries. The
+  * complete environment contract and operator sequence live in README.md.
+  *
   * Configuration (env vars; Cloud Run service settings in production):
-  *   - `DICECHESS_WEBHOOK_SECRET` — required per-bot signing key from webhook registration; an empty value fails
-  *     startup.
   *   - `BOT_PROFILE` — `legacy` (default) or the fail-closed production contract `hybrid-star2-v1`.
   *   - `MODEL_PATH` — path to the mounted ONNX value model (e.g. `/models/oracle-3.onnx`). Unset → the bundled
   *     synthetic model (boots + plays legal, signal-free moves).
@@ -37,22 +40,28 @@ import java.util.concurrent.CountDownLatch
   */
 object Main:
 
-  private val WebhookPath = "/api/webhook"
+  private val WebhookPath          = "/api/webhook"
+  private val MissingWebhookKeys   = "At least one webhook signing secret must be set and non-empty"
+  private val MissingWebhookSecret = "DICECHESS_WEBHOOK_SECRET must be set and non-empty"
 
   def main(args: Array[String]): Unit =
     val _        = args
-    val secret   = requireWebhookSecret(sys.env.get("DICECHESS_WEBHOOK_SECRET"))
+    val keys     = resolveWebhookKeys()
     val strategy = Strategy.fromEnvironment // builds and warms the ONNX session at startup
-    val server   = CustomHandlerServer.start(resolvePort, WebhookPath, new WebhookHandler(secret, strategy))
+    val server   = CustomHandlerServer.start(resolvePort, WebhookPath, new WebhookHandler(keys, strategy))
     val stopped  = new CountDownLatch(1)
     val hook     = new Thread(() => stopGracefully(server, strategy, stopped), "dicechess-bot-shutdown")
     Runtime.getRuntime.addShutdownHook(hook)
     println(s"[bot] ONNX custom handler listening on :${server.getAddress.getPort}$WebhookPath")
     stopped.await()
 
+  private[bot] def resolveWebhookKeys(env: Map[String, String] = sys.env): WebhookKeys =
+    try WebhookKeys.fromEnvironment(env.asJava)
+    catch case _: IllegalArgumentException => sys.error(MissingWebhookKeys)
+
   private[bot] def requireWebhookSecret(value: Option[String]): String =
     value.filter(_.trim.nonEmpty).getOrElse {
-      sys.error("DICECHESS_WEBHOOK_SECRET must be set and non-empty")
+      sys.error(MissingWebhookSecret)
     }
 
   private def stopGracefully(server: HttpServer, strategy: Strategy, stopped: CountDownLatch): Unit =
@@ -71,4 +80,7 @@ object Main:
 
   /** Start the server on an explicit port (exposed for the end-to-end test; port 0 = ephemeral). */
   def start(port: Int, secret: String, strategy: Strategy): HttpServer =
-    CustomHandlerServer.start(port, WebhookPath, new WebhookHandler(secret, strategy))
+    start(port, WebhookKeys.activeOnly(secret), strategy)
+
+  def start(port: Int, keys: WebhookKeys, strategy: Strategy): HttpServer =
+    CustomHandlerServer.start(port, WebhookPath, new WebhookHandler(keys, strategy))
