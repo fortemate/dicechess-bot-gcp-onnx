@@ -34,7 +34,7 @@ ThisBuild / developers := List(
 val DiceChessEngineVersion     = "0.9.1"
 val DiceChessBotRuntimeVersion = "2.0.0"
 val CirceVersion               = "0.14.16"
-val MunitVersion               = "1.3.5"
+val MunitVersion               = "1.3.6"
 
 lazy val testAll = taskKey[Unit]("Run every test, while allowing an empty bootstrap project")
 
