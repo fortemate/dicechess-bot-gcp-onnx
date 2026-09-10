@@ -1,5 +1,13 @@
 package com.fortemate.dicechess.bot
 
+import com.fortemate.dicechess.runtime.{
+  DoubleDecisionContext,
+  DoubleOpportunityContext,
+  DoublingDecision,
+  DrawDecisionContext,
+  GameClock,
+  TurnContext
+}
 import dicechess.engine.domain.{Color, FenParser}
 import dicechess.engine.search.{
   OnnxFeatures,
@@ -428,3 +436,146 @@ class StrategySuite extends munit.FunSuite:
           assertEquals(searchCalls, 0)
         else assertEquals(searchCalls, 1)
       finally strategy.close()
+
+  test("onTurn produces TurnAction with legal moves and handles draw offers"):
+    val clock = new GameClock(800L, 800L, java.lang.Long.valueOf(3000L))
+    withStrategy { s =>
+      val ctx    = new TurnContext("g1", "White", 1L, initialNbk, clock, java.util.List.of(), true)
+      val action = s.onTurn(ctx)
+      assert(action.moves().size() > 0)
+      assert(!action.offerDraw(), "default engine search does not offer a draw")
+      assert(legalPaths(initialNbk).contains(action.moves().asScala.toList))
+    }
+
+    val drawStrat = new Strategy(new TestHelpers.ConfigurableSearch(offerDraw = true))
+    try
+      val allowCtx = new TurnContext("g1", "White", 1L, initialNbk, clock, java.util.List.of(), true)
+      assert(drawStrat.onTurn(allowCtx).offerDraw())
+
+      val forbidCtx = new TurnContext("g1", "White", 1L, initialNbk, clock, java.util.List.of(), false)
+      assert(!drawStrat.onTurn(forbidCtx).offerDraw())
+
+      val badCtx = new TurnContext("g1", "White", 1L, TestHelpers.InvalidDfen, clock, java.util.List.of(), true)
+      val badAct = drawStrat.onTurn(badCtx)
+      assertEquals(badAct.moves().size(), 0)
+      assert(!badAct.offerDraw())
+    finally drawStrat.close()
+
+  private val FailsClosedOnInvalidDfen = "fails closed on invalid DFEN"
+
+  test("onDrawDecision delegates to wrapped engine shouldAcceptDraw from bot perspective"):
+    val clock        = new GameClock(800L, 800L, java.lang.Long.valueOf(3000L))
+    val acceptStrat  = new Strategy(new TestHelpers.ConfigurableSearch(acceptDraw = true))
+    val declineStrat = new Strategy(new TestHelpers.ConfigurableSearch(acceptDraw = false))
+    try
+      val drawCtx = new DrawDecisionContext("g1", "Black", 1L, FenParser.InitialPosition, clock)
+      assert(acceptStrat.onDrawDecision(drawCtx).acceptDraw())
+      assert(!declineStrat.onDrawDecision(drawCtx).acceptDraw())
+
+      val badCtx = new DrawDecisionContext("g1", "Black", 1L, TestHelpers.InvalidDfen, clock)
+      assert(!acceptStrat.onDrawDecision(badCtx).acceptDraw(), FailsClosedOnInvalidDfen)
+    finally
+      acceptStrat.close()
+      declineStrat.close()
+
+  test("onDoubleOpportunity bridges shouldOfferDouble with current stake multiplier and bot perspective"):
+    val clock      = new GameClock(800L, 800L, java.lang.Long.valueOf(3000L))
+    val offerStrat = new Strategy(new TestHelpers.ConfigurableSearch(offerDouble = true))
+    val rollStrat  = new Strategy(new TestHelpers.ConfigurableSearch(offerDouble = false))
+    try
+      val oppCtx =
+        new DoubleOpportunityContext("g1", "White", 1L, FenParser.InitialPosition, clock, TestHelpers.doublingState())
+      assert(offerStrat.onDoubleOpportunity(oppCtx).offerDouble())
+      assert(!rollStrat.onDoubleOpportunity(oppCtx).offerDouble())
+
+      val badCtx =
+        new DoubleOpportunityContext("g1", "White", 1L, TestHelpers.InvalidDfen, clock, TestHelpers.doublingState())
+      assert(!offerStrat.onDoubleOpportunity(badCtx).offerDouble(), FailsClosedOnInvalidDfen)
+    finally
+      offerStrat.close()
+      rollStrat.close()
+
+  test("onDoubleDecision bridges shouldAcceptDouble with proposed stake multiplier and bot perspective"):
+    val clock        = new GameClock(800L, 800L, java.lang.Long.valueOf(3000L))
+    val acceptStrat  = new Strategy(new TestHelpers.ConfigurableSearch(acceptDouble = true))
+    val declineStrat = new Strategy(new TestHelpers.ConfigurableSearch(acceptDouble = false))
+    try
+      val respDecision = new DoublingDecision.Response("double_1", "Black", "White", 200L)
+      val dState       = TestHelpers.doublingState(mayOfferDouble = false, decision = respDecision)
+      val decCtx       = new DoubleDecisionContext("g1", "Black", 1L, FenParser.InitialPosition, clock, dState)
+
+      assert(acceptStrat.onDoubleDecision(decCtx).acceptDouble())
+      assert(!declineStrat.onDoubleDecision(decCtx).acceptDouble())
+
+      val badCtx = new DoubleDecisionContext("g1", "Black", 1L, TestHelpers.InvalidDfen, clock, dState)
+      assert(!acceptStrat.onDoubleDecision(badCtx).acceptDouble(), FailsClosedOnInvalidDfen)
+    finally
+      acceptStrat.close()
+      declineStrat.close()
+
+  test("policy helpers and direct entry points behave predictably"):
+    assertEquals(Strategy.seatToColor("Black"), Color.Black)
+    assertEquals(Strategy.seatToColor("black"), Color.Black)
+    assertEquals(Strategy.seatToColor("White"), Color.White)
+    assertEquals(Strategy.seatToColor("WHITE"), Color.White)
+    assertEquals(Strategy.seatToColor("other"), Color.White)
+    assertEquals(Strategy.seatToColor((None: Option[String]).orNull), Color.White)
+
+    val clock  = new GameClock(800L, 800L, java.lang.Long.valueOf(3000L))
+    val oppCtx = new DoubleOpportunityContext(
+      "g1",
+      "White",
+      1L,
+      FenParser.InitialPosition,
+      clock,
+      TestHelpers.doublingState(currentStake = 400L, cubeValue = 4)
+    )
+    assertEquals(Strategy.currentMultiplier(oppCtx), 4)
+
+    val respDecision = new DoublingDecision.Response("double_1", "Black", "White", 400L)
+    val dState       = TestHelpers.doublingState(mayOfferDouble = false, decision = respDecision)
+    val decCtx       = new DoubleDecisionContext("g1", "Black", 1L, FenParser.InitialPosition, clock, dState)
+    assertEquals(Strategy.proposedMultiplier(decCtx), 4)
+
+    withStrategy { s =>
+      assertEquals(s.shouldAcceptDraw(TestHelpers.InvalidDfen, "White"), false)
+      assertEquals(s.shouldOfferDouble(TestHelpers.InvalidDfen, "White", 1), false)
+      assertEquals(s.shouldAcceptDouble(TestHelpers.InvalidDfen, "White", 2), false)
+
+      // In initial position, bot default draw offer/accept is false, double offer is false
+      assertEquals(s.shouldAcceptDraw(FenParser.InitialPosition, "White"), false)
+      assertEquals(s.shouldOfferDouble(FenParser.InitialPosition, "White", 1), false)
+      // Initial position has 50% win probability > 25%, so default engine shouldAcceptDouble returns true
+      assertEquals(s.shouldAcceptDouble(FenParser.InitialPosition, "White", 2), true)
+    }
+
+  test("policy exceptions fail closed safely without bubbling"):
+    class CrashingSearch extends dicechess.engine.search.SearchAlgorithm:
+      override def findBestMove(state: dicechess.engine.domain.GameState)              = sys.error("boom")
+      override def shouldOfferDraw(state: dicechess.engine.domain.GameState): Boolean  = sys.error("draw boom")
+      override def shouldAcceptDraw(state: dicechess.engine.domain.GameState): Boolean = sys.error("accept draw boom")
+      override def shouldOfferDouble(state: dicechess.engine.domain.GameState, currentStake: Int): Boolean =
+        sys.error("double boom")
+      override def shouldAcceptDouble(state: dicechess.engine.domain.GameState, currentStake: Int): Boolean =
+        sys.error("accept double boom")
+
+    val strat = new Strategy(new CrashingSearch)
+    try
+      val clock   = new GameClock(800L, 800L, java.lang.Long.valueOf(3000L))
+      val turnCtx = new TurnContext("g1", "White", 1L, initialNbk, clock, java.util.List.of(), true)
+      val turnAct = strat.onTurn(turnCtx)
+      assertEquals(turnAct.moves().size(), 0)
+      assert(!turnAct.offerDraw())
+
+      val drawCtx = new DrawDecisionContext("g1", "White", 1L, FenParser.InitialPosition, clock)
+      assert(!strat.onDrawDecision(drawCtx).acceptDraw())
+
+      val oppCtx =
+        new DoubleOpportunityContext("g1", "White", 1L, FenParser.InitialPosition, clock, TestHelpers.doublingState())
+      assert(!strat.onDoubleOpportunity(oppCtx).offerDouble())
+
+      val respDecision = new DoublingDecision.Response("double_1", "Black", "White", 200L)
+      val dState       = TestHelpers.doublingState(mayOfferDouble = false, decision = respDecision)
+      val decCtx       = new DoubleDecisionContext("g1", "Black", 1L, FenParser.InitialPosition, clock, dState)
+      assert(!strat.onDoubleDecision(decCtx).acceptDouble())
+    finally strat.close()

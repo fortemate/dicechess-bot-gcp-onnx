@@ -87,12 +87,32 @@ fork without private assets runs the bundled synthetic model and five-entry book
 
 | Path | Role |
 | --- | --- |
-| `src/main/scala/com/fortemate/dicechess/bot/Strategy.scala` | Configured ONNX search wrapped by `OpeningBookBot`, clock → `TimeManager` deadline; serialized single-writer search with optional TT. |
+| `src/main/scala/com/fortemate/dicechess/bot/Strategy.scala` | Configured ONNX search wrapped by `OpeningBookBot`, clock → `TimeManager` deadline, and runtime v2 `BotStrategy` decision handling (turns, draw decisions, doubling opportunities/responses); serialized single-writer search with optional TT. |
 | `src/main/scala/com/fortemate/dicechess/bot/ArtifactProvenance.scala` | Streams SHA-256 verification for mounted models/books and fails closed on a mismatch. |
-| `src/main/scala/com/fortemate/dicechess/bot/Main.scala` | Wires `Strategy` into [`dicechess-bot-runtime`](https://github.com/fortemate/dicechess-bot-runtime)'s `WebhookHandler`/`CustomHandlerServer`; binds the platform's `$PORT`. |
+| `src/main/scala/com/fortemate/dicechess/bot/Main.scala` | Wires `Strategy` directly as `BotStrategy` into [`dicechess-bot-runtime`](https://github.com/fortemate/dicechess-bot-runtime) v2 (`com.fortemate:dicechess-bot-runtime` 2.0.0)'s `WebhookHandler`/`CustomHandlerServer`; binds the platform's `$PORT`. |
 | `src/main/resources/opening_book.tsv` | Five public example entries in the engine's TSV format; production uses `OPENING_BOOK_PATH`. |
 | `src/main/resources/synthetic_test_model.onnx` | Open, signal-free fallback model — so the bot runs with no `MODEL_PATH`. |
 | `Dockerfile` | Multi-stage, non-root public image on `eclipse-temurin:25-jre-noble`; trained weights are provided privately at deployment. |
+
+HMAC verification, signature handshakes, decision routing, and the JDK `HttpServer` itself are managed by
+[`dicechess-bot-runtime`](https://github.com/fortemate/dicechess-bot-runtime) v2 (`com.fortemate:dicechess-bot-runtime` 2.0.0). `Main.scala` supplies the typed `BotStrategy` directly to `WebhookHandler`.
+
+## Runtime v2 & Webhook Capabilities
+
+This bot consumes `com.fortemate:dicechess-bot-runtime` **2.0.0** and implements the typed `BotStrategy` decision contract:
+- **Turn Actions (`onTurn`)**: Computes legal micro-move paths via ONNX expectimax / one-ply search or opening book, respecting wire clocks (`ctx.clock()`). Conditionally offers a draw when permitted by the delivery (`mayOfferDraw`) and recommended by the wrapped engine search policy (`shouldOfferDraw`).
+- **Draw Decisions (`onDrawDecision`)**: Evaluates incoming draw offers from the bot's active-color perspective (`shouldAcceptDraw`).
+- **Doubling Opportunities (`onDoubleOpportunity`)**: Evaluates stake-doubling opportunities before rolling (`shouldOfferDouble`), matching active-color perspective and current stake multiplier.
+- **Doubling Decisions (`onDoubleDecision`)**: Evaluates incoming double offers from opponents (`shouldAcceptDouble`), matching active-color perspective and proposed stake multiplier.
+
+### Required Webhook Capabilities
+
+When registering or updating this bot on the Dice Chess platform, configure the following webhook capabilities:
+- `turn` — Normal turn move selection and draw offering.
+- `draw` — Pre-roll draw decision evaluation.
+- `double` — Pre-roll stake doubling opportunity and response evaluation.
+
+> **Operational Note**: Release publication, Cloud Run deployment, webhook re-registration, secret rotation, and capability enablement on the live platform are separate human-owned administrative steps.
 
 ## Local development
 

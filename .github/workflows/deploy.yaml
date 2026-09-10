@@ -170,7 +170,7 @@ jobs:
           done
           jq --exit-status '.nonce == "container-smoke"' <<<"$response"
 
-          body='{"type":"yourTurn","gameId":"smoke-game","seat":"White","state":{"dfen":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1 NBK","clocks":{"white":5000,"black":5000},"timeControl":{"Fischer":{"initialSeconds":300,"incrementSeconds":3}}}}'
+          body='{"type":"yourTurn","gameId":"smoke-game","seat":"White","state":{"version":1,"activeSeat":"White","dicePending":true,"dfen":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1 NBK","clocks":{"white":5000,"black":5000},"timeControl":{"Fischer":{"initialSeconds":300,"incrementSeconds":3}}}}'
           timestamp=$(date +%s)
           signature=$(printf '%s' "${timestamp}.${body}" | openssl dgst -sha256 -hmac smoke -hex | awk '{print $2}')
           turn=$(curl --fail --silent --show-error \
