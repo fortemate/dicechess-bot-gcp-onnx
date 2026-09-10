@@ -83,8 +83,14 @@ class MainSuite extends munit.FunSuite:
       assertEquals(parse(handshake.body()).toOption.get.hcursor.get[String]("nonce"), Right("live-1"))
 
       val clocks = """{"white":800,"black":800},"timeControl":{"Fischer":{"initialSeconds":300,"incrementSeconds":3}}"""
-      val body   = TestHelpers.makeEnvelope("yourTurn", "White", initialNbk, dicePending = true, clocks = Some(clocks))
-      val turn   = postSigned(client, url, body)
+      val body   =
+        TestHelpers.makeEnvelope(
+          "yourTurn",
+          "White",
+          initialNbk,
+          TestHelpers.StateOptions(dicePending = true, clocks = Some(clocks))
+        )
+      val turn = postSigned(client, url, body)
       assertEquals(turn.statusCode(), 200)
 
       val json      = parse(turn.body()).toOption.get
@@ -101,8 +107,13 @@ class MainSuite extends munit.FunSuite:
   test("end to end over real HTTP: turn offers draw when permitted by context and engine policy returns true"):
     val drawStrat = new Strategy(new TestHelpers.ConfigurableSearch(offerDraw = true))
     withServer(drawStrat) { (client, url) =>
-      val body = TestHelpers.makeEnvelope("yourTurn", "White", initialNbk, dicePending = true, mayOfferDraw = true)
-      val res  = postSigned(client, url, body)
+      val body = TestHelpers.makeEnvelope(
+        "yourTurn",
+        "White",
+        initialNbk,
+        TestHelpers.StateOptions(dicePending = true, mayOfferDraw = true)
+      )
+      val res = postSigned(client, url, body)
       assertEquals(res.statusCode(), 200)
       val json      = parse(res.body()).toOption.get
       val offerDraw = json.hcursor.get[Boolean]("offerDraw").toOption.get
@@ -112,8 +123,13 @@ class MainSuite extends munit.FunSuite:
   test("end to end over real HTTP: turn does not offer draw when permitted but engine policy returns false"):
     val noDrawStrat = new Strategy(new TestHelpers.ConfigurableSearch(offerDraw = false))
     withServer(noDrawStrat) { (client, url) =>
-      val body = TestHelpers.makeEnvelope("yourTurn", "White", initialNbk, dicePending = true, mayOfferDraw = true)
-      val res  = postSigned(client, url, body)
+      val body = TestHelpers.makeEnvelope(
+        "yourTurn",
+        "White",
+        initialNbk,
+        TestHelpers.StateOptions(dicePending = true, mayOfferDraw = true)
+      )
+      val res = postSigned(client, url, body)
       assertEquals(res.statusCode(), 200)
       val json      = parse(res.body()).toOption.get
       val offerDraw = json.hcursor.get[Boolean]("offerDraw").toOption.get
@@ -123,8 +139,13 @@ class MainSuite extends munit.FunSuite:
   test("end to end over real HTTP: turn does not offer draw when engine policy is true but context does not permit it"):
     val drawStrat = new Strategy(new TestHelpers.ConfigurableSearch(offerDraw = true))
     withServer(drawStrat) { (client, url) =>
-      val body = TestHelpers.makeEnvelope("yourTurn", "White", initialNbk, dicePending = true, mayOfferDraw = false)
-      val res  = postSigned(client, url, body)
+      val body = TestHelpers.makeEnvelope(
+        "yourTurn",
+        "White",
+        initialNbk,
+        TestHelpers.StateOptions(dicePending = true, mayOfferDraw = false)
+      )
+      val res = postSigned(client, url, body)
       assertEquals(res.statusCode(), 200)
       val json      = parse(res.body()).toOption.get
       val offerDraw = json.hcursor.get[Boolean]("offerDraw").toOption.get
@@ -147,7 +168,8 @@ class MainSuite extends munit.FunSuite:
   test("end to end over real HTTP: draw decision accept/decline responses"):
     val acceptStrat  = new Strategy(new TestHelpers.ConfigurableSearch(acceptDraw = true))
     val declineStrat = new Strategy(new TestHelpers.ConfigurableSearch(acceptDraw = false))
-    val body         = TestHelpers.makeEnvelope("drawDecision", "White", noDiceFen, drawOfferPending = true)
+    val body         =
+      TestHelpers.makeEnvelope("drawDecision", "White", noDiceFen, TestHelpers.StateOptions(drawOfferPending = true))
     testDecision(acceptStrat, declineStrat, body, "acceptDraw")
 
   test("end to end over real HTTP: double opportunity offer/roll responses"):
@@ -157,7 +179,7 @@ class MainSuite extends munit.FunSuite:
       "doubleOpportunity",
       "White",
       noDiceFen,
-      doublingState = Some(TestHelpers.doublingJson("offer", "White"))
+      TestHelpers.StateOptions(doublingState = Some(TestHelpers.doublingJson("offer", "White")))
     )
     testDecision(offerStrat, rollStrat, body, "offerDouble")
 
@@ -168,16 +190,19 @@ class MainSuite extends munit.FunSuite:
       "doubleDecision",
       "Black",
       noDiceFen,
-      activeSeat = "Black",
-      doublingState =
-        Some(TestHelpers.doublingJson("response", "Black", offeredBy = Some("White"), mayOfferDouble = false))
+      TestHelpers.StateOptions(
+        activeSeat = "Black",
+        doublingState =
+          Some(TestHelpers.doublingJson("response", "Black", offeredBy = Some("White"), mayOfferDouble = false))
+      )
     )
     testDecision(acceptStrat, declineStrat, body, "acceptDouble")
 
   test("end to end over real HTTP: safe defaults with synthetic ONNX strategy"):
     withServer(createSyntheticStrategy()) { (client, url) =>
-      val drawBody = TestHelpers.makeEnvelope("drawDecision", "White", noDiceFen, drawOfferPending = true)
-      val drawRes  = postSigned(client, url, drawBody)
+      val drawBody =
+        TestHelpers.makeEnvelope("drawDecision", "White", noDiceFen, TestHelpers.StateOptions(drawOfferPending = true))
+      val drawRes = postSigned(client, url, drawBody)
       assertEquals(drawRes.statusCode(), 200)
       assertEquals(parse(drawRes.body()).toOption.get.hcursor.get[Boolean]("acceptDraw"), Right(false))
 
@@ -185,7 +210,7 @@ class MainSuite extends munit.FunSuite:
         "doubleOpportunity",
         "White",
         noDiceFen,
-        doublingState = Some(TestHelpers.doublingJson("offer", "White"))
+        TestHelpers.StateOptions(doublingState = Some(TestHelpers.doublingJson("offer", "White")))
       )
       val oppRes = postSigned(client, url, oppBody)
       assertEquals(oppRes.statusCode(), 200)
@@ -194,7 +219,8 @@ class MainSuite extends munit.FunSuite:
 
   test("end to end over real HTTP: rejects missing or invalid signatures"):
     withServer(createSyntheticStrategy()) { (client, url) =>
-      val body = TestHelpers.makeEnvelope("yourTurn", "White", initialNbk, dicePending = true)
+      val body =
+        TestHelpers.makeEnvelope("yourTurn", "White", initialNbk, TestHelpers.StateOptions(dicePending = true))
 
       val noSig = postRaw(client, url, body)
       assertEquals(noSig.statusCode(), 401)
@@ -205,7 +231,8 @@ class MainSuite extends munit.FunSuite:
 
   test("end to end over real HTTP: rejects expired timestamp"):
     withServer(createSyntheticStrategy()) { (client, url) =>
-      val body       = TestHelpers.makeEnvelope("yourTurn", "White", initialNbk, dicePending = true)
+      val body =
+        TestHelpers.makeEnvelope("yourTurn", "White", initialNbk, TestHelpers.StateOptions(dicePending = true))
       val expiredSec = (System.currentTimeMillis() / 1000) - 400
       val res        = postSigned(client, url, body, timestamp = expiredSec)
       assertEquals(res.statusCode(), 401)
@@ -213,23 +240,33 @@ class MainSuite extends munit.FunSuite:
 
   test("end to end over real HTTP: malformed DFEN in turn and decisions fail closed"):
     withServer(createSyntheticStrategy()) { (client, url) =>
-      val turnBody = TestHelpers.makeEnvelope("yourTurn", "White", "invalid-dfen", dicePending = true)
-      val turnRes  = postSigned(client, url, turnBody)
+      val turnBody = TestHelpers.makeEnvelope(
+        "yourTurn",
+        "White",
+        TestHelpers.InvalidDfen,
+        TestHelpers.StateOptions(dicePending = true)
+      )
+      val turnRes = postSigned(client, url, turnBody)
       assertEquals(turnRes.statusCode(), 200)
       val turnJson = parse(turnRes.body()).toOption.get
       assertEquals(turnJson.hcursor.get[List[String]]("moves"), Right(Nil))
       assertEquals(turnJson.hcursor.get[Boolean]("offerDraw"), Right(false))
 
-      val drawBody = TestHelpers.makeEnvelope("drawDecision", "White", "invalid-dfen", drawOfferPending = true)
-      val drawRes  = postSigned(client, url, drawBody)
+      val drawBody = TestHelpers.makeEnvelope(
+        "drawDecision",
+        "White",
+        TestHelpers.InvalidDfen,
+        TestHelpers.StateOptions(drawOfferPending = true)
+      )
+      val drawRes = postSigned(client, url, drawBody)
       assertEquals(drawRes.statusCode(), 200)
       assertEquals(parse(drawRes.body()).toOption.get.hcursor.get[Boolean]("acceptDraw"), Right(false))
 
       val oppBody = TestHelpers.makeEnvelope(
         "doubleOpportunity",
         "White",
-        "invalid-dfen",
-        doublingState = Some(TestHelpers.doublingJson("offer", "White"))
+        TestHelpers.InvalidDfen,
+        TestHelpers.StateOptions(doublingState = Some(TestHelpers.doublingJson("offer", "White")))
       )
       val oppRes = postSigned(client, url, oppBody)
       assertEquals(oppRes.statusCode(), 200)
@@ -238,10 +275,12 @@ class MainSuite extends munit.FunSuite:
       val decBody = TestHelpers.makeEnvelope(
         "doubleDecision",
         "Black",
-        "invalid-dfen",
-        activeSeat = "Black",
-        doublingState =
-          Some(TestHelpers.doublingJson("response", "Black", offeredBy = Some("White"), mayOfferDouble = false))
+        TestHelpers.InvalidDfen,
+        TestHelpers.StateOptions(
+          activeSeat = "Black",
+          doublingState =
+            Some(TestHelpers.doublingJson("response", "Black", offeredBy = Some("White"), mayOfferDouble = false))
+        )
       )
       val decRes = postSigned(client, url, decBody)
       assertEquals(decRes.statusCode(), 200)

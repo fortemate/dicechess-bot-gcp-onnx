@@ -455,11 +455,13 @@ class StrategySuite extends munit.FunSuite:
       val forbidCtx = new TurnContext("g1", "White", 1L, initialNbk, clock, java.util.List.of(), false)
       assert(!drawStrat.onTurn(forbidCtx).offerDraw())
 
-      val badCtx = new TurnContext("g1", "White", 1L, "invalid-dfen", clock, java.util.List.of(), true)
+      val badCtx = new TurnContext("g1", "White", 1L, TestHelpers.InvalidDfen, clock, java.util.List.of(), true)
       val badAct = drawStrat.onTurn(badCtx)
       assertEquals(badAct.moves().size(), 0)
       assert(!badAct.offerDraw())
     finally drawStrat.close()
+
+  private val FailsClosedOnInvalidDfen = "fails closed on invalid DFEN"
 
   test("onDrawDecision delegates to wrapped engine shouldAcceptDraw from bot perspective"):
     val clock        = new GameClock(800L, 800L, java.lang.Long.valueOf(3000L))
@@ -470,8 +472,8 @@ class StrategySuite extends munit.FunSuite:
       assert(acceptStrat.onDrawDecision(drawCtx).acceptDraw())
       assert(!declineStrat.onDrawDecision(drawCtx).acceptDraw())
 
-      val badCtx = new DrawDecisionContext("g1", "Black", 1L, "invalid-dfen", clock)
-      assert(!acceptStrat.onDrawDecision(badCtx).acceptDraw(), "fails closed on invalid DFEN")
+      val badCtx = new DrawDecisionContext("g1", "Black", 1L, TestHelpers.InvalidDfen, clock)
+      assert(!acceptStrat.onDrawDecision(badCtx).acceptDraw(), FailsClosedOnInvalidDfen)
     finally
       acceptStrat.close()
       declineStrat.close()
@@ -486,8 +488,9 @@ class StrategySuite extends munit.FunSuite:
       assert(offerStrat.onDoubleOpportunity(oppCtx).offerDouble())
       assert(!rollStrat.onDoubleOpportunity(oppCtx).offerDouble())
 
-      val badCtx = new DoubleOpportunityContext("g1", "White", 1L, "invalid-dfen", clock, TestHelpers.doublingState())
-      assert(!offerStrat.onDoubleOpportunity(badCtx).offerDouble(), "fails closed on invalid DFEN")
+      val badCtx =
+        new DoubleOpportunityContext("g1", "White", 1L, TestHelpers.InvalidDfen, clock, TestHelpers.doublingState())
+      assert(!offerStrat.onDoubleOpportunity(badCtx).offerDouble(), FailsClosedOnInvalidDfen)
     finally
       offerStrat.close()
       rollStrat.close()
@@ -504,8 +507,8 @@ class StrategySuite extends munit.FunSuite:
       assert(acceptStrat.onDoubleDecision(decCtx).acceptDouble())
       assert(!declineStrat.onDoubleDecision(decCtx).acceptDouble())
 
-      val badCtx = new DoubleDecisionContext("g1", "Black", 1L, "invalid-dfen", clock, dState)
-      assert(!acceptStrat.onDoubleDecision(badCtx).acceptDouble(), "fails closed on invalid DFEN")
+      val badCtx = new DoubleDecisionContext("g1", "Black", 1L, TestHelpers.InvalidDfen, clock, dState)
+      assert(!acceptStrat.onDoubleDecision(badCtx).acceptDouble(), FailsClosedOnInvalidDfen)
     finally
       acceptStrat.close()
       declineStrat.close()
@@ -535,9 +538,9 @@ class StrategySuite extends munit.FunSuite:
     assertEquals(Strategy.proposedMultiplier(decCtx), 4)
 
     withStrategy { s =>
-      assertEquals(s.shouldAcceptDraw("invalid-dfen", "White"), false)
-      assertEquals(s.shouldOfferDouble("invalid-dfen", "White", 1), false)
-      assertEquals(s.shouldAcceptDouble("invalid-dfen", "White", 2), false)
+      assertEquals(s.shouldAcceptDraw(TestHelpers.InvalidDfen, "White"), false)
+      assertEquals(s.shouldOfferDouble(TestHelpers.InvalidDfen, "White", 1), false)
+      assertEquals(s.shouldAcceptDouble(TestHelpers.InvalidDfen, "White", 2), false)
 
       // In initial position, bot default draw offer/accept is false, double offer is false
       assertEquals(s.shouldAcceptDraw(FenParser.InitialPosition, "White"), false)
