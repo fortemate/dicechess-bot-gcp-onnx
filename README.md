@@ -44,7 +44,8 @@ so the budget **widens the candidate set** (and prevents flagging) rather than d
 
 | Env var | Default | Meaning |
 | --- | --- | --- |
-| `DICECHESS_WEBHOOK_SECRET` | *(required)* | Per-bot webhook signing secret. Empty or absent values fail startup. |
+| `DICECHESS_WEBHOOK_SECRET` | *(required)* | Active per-bot webhook signing secret. Empty or absent values fail startup. |
+| `DICECHESS_WEBHOOK_NEXT_SECRET` | *(optional)* | Pending per-bot webhook signing secret for key rotation and `verification-v2` proof. |
 | `BOT_PROFILE` | `legacy` | `legacy` preserves independent env configuration; `hybrid-star2-v1` atomically requires the documented production search, artifacts, identity, and immutable provenance. |
 | `MODEL_PATH` | *(synthetic)* | Path to the mounted ONNX value model, e.g. `/models/oracle-3.onnx`. |
 | `OPENING_BOOK_PATH` | bundled 5-entry sample | Path to a privately mounted TSV opening book, e.g. `/models/opening_book.tsv`. |
@@ -115,6 +116,20 @@ The exact `doubling` capability name is reserved by the platform and is not sele
 already implements the typed runtime v2 doubling decisions, but operators must not add `doubling`
 to a registration until the play-api makes it selectable. `turn`, `draw`, and `double` are not valid
 registration capability names.
+
+### Dual-key webhook rotation sequence
+
+When rotating webhook secrets, operators perform a two-step promotion/retirement sequence after authoritative `play-api` readback:
+
+1. **Staging / Verification-v2**:
+   - Operator provisions a next secret on the play-api and sets `DICECHESS_WEBHOOK_NEXT_SECRET` on the running container alongside the current `DICECHESS_WEBHOOK_SECRET`.
+   - The platform sends a `verification` payload with `version: 2`. The bot answers with a proof signed exclusively using `DICECHESS_WEBHOOK_NEXT_SECRET`.
+   - During this stage, ordinary deliveries (`yourTurn`, decisions) are accepted using either the active or pending key according to the runtime transition behavior.
+   - The bot **never auto-promotes** the pending key after answering `verification-v2`.
+
+2. **Promotion & Retirement**:
+   - Once `play-api` confirms successful verification-v2 readback, the operator promotes the pending secret to active on `play-api`.
+   - The operator updates the container configuration: `DICECHESS_WEBHOOK_SECRET` is set to the new active key, and `DICECHESS_WEBHOOK_NEXT_SECRET` is unset.
 
 > **Operational Note**: Release publication, Cloud Run deployment, webhook re-registration, secret rotation, and capability enablement on the live platform are separate human-owned administrative steps.
 
