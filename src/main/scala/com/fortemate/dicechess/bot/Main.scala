@@ -10,11 +10,11 @@ import scala.jdk.CollectionConverters.*
   * `HttpServer` — lives in `dicechess-bot-runtime`; this object wires our engine-backed, clock-aware [[Strategy]]
   * directly into it and binds the port Cloud Run gives us.
   *
+  * Runtime-v2 key resolution accepts a pending signing key so a fresh session-managed registration can answer
+  * verification-v2 before promotion, and an existing registration can rotate keys without interrupting deliveries. The
+  * complete environment contract and operator sequence live in README.md.
+  *
   * Configuration (env vars; Cloud Run service settings in production):
-  *   - `DICECHESS_WEBHOOK_SECRET` — active per-bot signing key. It may be absent only while bootstrapping a fresh
-  *     session-managed registration with the pending key below.
-  *   - `DICECHESS_WEBHOOK_NEXT_SECRET` — pending per-bot signing key for initial registration, rotation and
-  *     verification-v2 proof. At least one of the two keys must be present.
   *   - `BOT_PROFILE` — `legacy` (default) or the fail-closed production contract `hybrid-star2-v1`.
   *   - `MODEL_PATH` — path to the mounted ONNX value model (e.g. `/models/oracle-3.onnx`). Unset → the bundled
   *     synthetic model (boots + plays legal, signal-free moves).
