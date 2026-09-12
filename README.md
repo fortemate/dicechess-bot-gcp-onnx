@@ -47,7 +47,7 @@ so the budget **widens the candidate set** (and prevents flagging) rather than d
 | `DICECHESS_WEBHOOK_SECRET` | *(conditional)* | Active per-bot webhook signing secret. May be absent only during pending-only initial registration. |
 | `DICECHESS_WEBHOOK_NEXT_SECRET` | *(conditional)* | Pending per-bot webhook signing secret for initial registration, key rotation, and `verification-v2` proof. At least one webhook key is required. |
 | `BOT_PROFILE` | `legacy` | `legacy` preserves independent env configuration; `hybrid-star2-v1` atomically requires the documented production search, artifacts, identity, and immutable provenance. |
-| `MODEL_PATH` | *(synthetic)* | Path to the mounted ONNX value model, e.g. `/models/oracle-3.onnx`. |
+| `MODEL_PATH` | *(synthetic)* | Path to the mounted ONNX value model, e.g. `/models/<leaf-model>.onnx`. |
 | `OPENING_BOOK_PATH` | bundled 5-entry sample | Path to a privately mounted TSV opening book, e.g. `/models/opening_book.tsv`. |
 | `ORACLE_FEATURES` | `rich` | Feature extractor the model was trained on: `material` (7), `rich` (9), `kcp` (13), `rich-pdi-11-v1` (11). |
 | `SEARCH_MODE` | `expectimax` | `expectimax` for 2-ply search or `one-ply` for direct model evaluation. |
@@ -66,17 +66,16 @@ so the budget **widens the candidate set** (and prevents flagging) rather than d
 | `OVERHEAD_BUFFER_MS` | `300` | Slack for the play-api↔bot round-trip + one uninterruptible inference. |
 | `DEFAULT_THINK_MS` | `2000` | Per-turn deadline for an untimed game. |
 
-## KCP root rescoring — why
+## KCP root rescoring
 
-The 9-feature leaf model is effectively blind to a hanging piece: its inputs (material counts,
-mobility, a binary king-attacked flag) barely move when the queen stands en prise, so the search
-happily walks into pawn attacks whenever the punishment lies past its 2-ply horizon. The 13-feature KCP model *does*
-see it (`queen_capture_danger` is a top-gain feature), but its 216-outcome dice DFS is ~18x too slow
-for the thousands of leaves under a chance node. Rescoring blends the KCP model's opinion into just
-the top `ORACLE_CANDIDATE_LIMIT` root candidates — a handful of DFS passes per move. Mount the KCP
-model next to the main one and set `RESCORE_MODEL_PATH` to
-enable it; a candidate that loses the king outright on some roll is never rescued by the rescorer
-(engine guarantee).
+Root rescoring mounts a second, `kcp`-featured ONNX model (13 inputs) and blends its opinion into the
+top `ORACLE_CANDIDATE_LIMIT` root candidates after the expectimax search:
+`final = (1-w)·search + w·rescore`, with `w = RESCORE_WEIGHT`. The KCP feature set integrates king
+and queen capture probabilities over all 216 dice outcomes, which is too expensive for every leaf of
+a chance node but affordable for a handful of root candidates. Set `RESCORE_MODEL_PATH` (and pin
+`RESCORE_MODEL_SHA256`) to enable it; a candidate that loses the king outright on some roll is never
+rescued by the rescorer (engine guarantee). Whether and how much rescoring helps a given leaf model is
+a measurement question and is not documented here.
 
 ## Licensing
 
@@ -151,7 +150,7 @@ Each release publishes a multi-architecture image to GitHub Container Registry a
 ```bash
 REGION=us-central1
 IMAGE=ghcr.io/fortemate/dicechess-bot-gcp-onnx@sha256:<published-multi-arch-index-digest>
-BOT_IDENTITY=dexus/atlas-1
+BOT_IDENTITY=<owner>/<bot-name>
 MODEL_SHA256=<64-hex-rich-model-digest>
 RESCORE_MODEL_SHA256=<64-hex-kcp-model-digest>
 OPENING_BOOK_SHA256=<64-hex-opening-book-digest>
@@ -168,10 +167,11 @@ gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
   --member="serviceAccount:$SERVICE_ACCOUNT_EMAIL" \
   --role=roles/storage.objectViewer
 
-# 2. Upload the private runtime assets. The optional second model is the KCP root rescorer.
-gcloud storage cp oracle-3.onnx "gs://$BUCKET/oracle-3.onnx"
-gcloud storage cp kcp_nodice.onnx "gs://$BUCKET/kcp_nodice.onnx"
-gcloud storage cp opening_book.tsv "gs://$BUCKET/opening_book.tsv"
+# 2. Upload your runtime assets. The optional second model is the KCP root rescorer. Without your own
+#    models the image runs the bundled synthetic model and the five-entry sample book.
+gcloud storage cp <leaf-model>.onnx "gs://$BUCKET/leaf.onnx"
+gcloud storage cp <kcp-rescore-model>.onnx "gs://$BUCKET/rescore.onnx"
+gcloud storage cp <opening-book>.tsv "gs://$BUCKET/opening_book.tsv"
 
 # 3. Create a non-empty bootstrap secret before the first deployment. The verification handshake is
 #    unsigned, but the process itself always fails closed without a signing key. Replace this secret
@@ -184,8 +184,9 @@ gcloud secrets add-iam-policy-binding "$SECRET_NAME" \
 
 # 4. Deploy with the model mounted read-only + selected via env. One Strategy serializes search, so
 #    keep per-instance concurrency at 1 and scale with independent replicas. Scale-to-zero avoids idle instances.
-#    Verify all three local files with sha256sum before using their expected values below. The wrapper
-#    pins engine 0.6.0, which includes the root-rescore-aware Star pruning fix (engine#89).
+#    Verify all three local files with sha256sum before using their expected values below. Choose the
+#    numeric values (candidate limit, TT capacity, rescore weight, buffers) for your own model and host;
+#    the profile enforces only the mode, feature set, pre-ranking, TT and time policy.
 gcloud run deploy dicechess-bot-gcp-onnx \
   --image "$IMAGE" --region "$REGION" \
   --service-account "$SERVICE_ACCOUNT_EMAIL" \
@@ -193,7 +194,7 @@ gcloud run deploy dicechess-bot-gcp-onnx \
   --add-volume=name=models,type=cloud-storage,bucket="$BUCKET",readonly=true,mount-options="uid=10001;gid=10001" \
   --add-volume-mount=volume=models,mount-path=/models \
   --set-secrets "DICECHESS_WEBHOOK_SECRET=${SECRET_NAME}:latest" \
-  --set-env-vars BOT_PROFILE=hybrid-star2-v1,BOT_IDENTITY="$BOT_IDENTITY",IMAGE_DIGEST="${IMAGE#*@}",MODEL_PATH=/models/oracle-3.onnx,MODEL_ID=oracle-3,MODEL_SHA256="$MODEL_SHA256",OPENING_BOOK_PATH=/models/opening_book.tsv,OPENING_BOOK_ID=opening-book,OPENING_BOOK_SHA256="$OPENING_BOOK_SHA256",SEARCH_MODE=expectimax,ORACLE_FEATURES=rich,ORACLE_CANDIDATE_LIMIT=8,PRE_RANK_WITH_MODEL=true,TT_ENABLED=true,TT_CAPACITY=262144,RESCORE_MODEL_PATH=/models/kcp_nodice.onnx,RESCORE_MODEL_ID=kcp-nodice,RESCORE_MODEL_SHA256="$RESCORE_MODEL_SHA256",RESCORE_WEIGHT=0.5,TIME_POLICY=empirical-v1,OVERHEAD_BUFFER_MS=1000,DEFAULT_THINK_MS=2000
+  --set-env-vars BOT_PROFILE=hybrid-star2-v1,BOT_IDENTITY="$BOT_IDENTITY",IMAGE_DIGEST="${IMAGE#*@}",MODEL_PATH=/models/leaf.onnx,MODEL_ID=<leaf-model-id>,MODEL_SHA256="$MODEL_SHA256",OPENING_BOOK_PATH=/models/opening_book.tsv,OPENING_BOOK_ID=<book-id>,OPENING_BOOK_SHA256="$OPENING_BOOK_SHA256",SEARCH_MODE=expectimax,ORACLE_FEATURES=rich,ORACLE_CANDIDATE_LIMIT=<candidate-limit>,PRE_RANK_WITH_MODEL=true,TT_ENABLED=true,TT_CAPACITY=<tt-capacity>,RESCORE_MODEL_PATH=/models/rescore.onnx,RESCORE_MODEL_ID=<rescore-model-id>,RESCORE_MODEL_SHA256="$RESCORE_MODEL_SHA256",RESCORE_WEIGHT=<rescore-weight>,TIME_POLICY=empirical-v1,OVERHEAD_BUFFER_MS=<overhead-ms>,DEFAULT_THINK_MS=<think-ms>
 ```
 
 To build a local container image instead (the multi-stage build runs sbt itself):
