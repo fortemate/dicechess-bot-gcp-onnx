@@ -33,6 +33,8 @@ ThisBuild / developers := List(
 // Both Fortemate libraries are public Maven Central artifacts; no repository credentials are required.
 val DiceChessEngineVersion     = "0.9.1"
 val DiceChessBotRuntimeVersion = "2.0.0"
+// ONNX Runtime version as documented by the engine: https://fortemate.github.io/dicechess-engine/artifacts/
+val OnnxRuntimeVersion         = "1.29.0"
 val CirceVersion               = "0.14.16"
 val MunitVersion               = "1.3.6"
 
@@ -56,10 +58,11 @@ lazy val root = (project in file("."))
       "-deprecation"
     ),
     libraryDependencies ++= Seq(
-      "com.fortemate" %% "dicechess-engine"      % DiceChessEngineVersion,
-      "com.fortemate"  % "dicechess-bot-runtime" % DiceChessBotRuntimeVersion,
-      "io.circe"      %% "circe-parser"          % CirceVersion % Test,
-      "org.scalameta" %% "munit"                 % MunitVersion % Test
+      "com.fortemate"           %% "dicechess-engine"      % DiceChessEngineVersion,
+      "com.fortemate"            % "dicechess-bot-runtime" % DiceChessBotRuntimeVersion,
+      "com.microsoft.onnxruntime" % "onnxruntime"          % OnnxRuntimeVersion,
+      "io.circe"                %% "circe-parser"          % CirceVersion % Test,
+      "org.scalameta"           %% "munit"                 % MunitVersion % Test
     ),
     Compile / resourceGenerators += Def.task {
       val output = (Compile / resourceManaged).value / "dicechess-engine-version.txt"
