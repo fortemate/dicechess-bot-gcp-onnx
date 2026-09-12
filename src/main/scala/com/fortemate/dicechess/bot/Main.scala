@@ -19,8 +19,8 @@ import scala.jdk.CollectionConverters.*
   *   - `MODEL_PATH` — path to the mounted ONNX value model (e.g. `/models/oracle-3.onnx`). Unset → the bundled
   *     synthetic model (boots + plays legal, signal-free moves).
   *   - `OPENING_BOOK_PATH` — path to an external TSV opening book. Unset → the bundled five-entry sample.
-  *   - `ORACLE_FEATURES` — feature extractor the model was trained on: `rich` (default; oracle-3), `material`, or
-  *     `kcp`, or `rich-pdi-11-v1` (11 columns).
+  *   - `ORACLE_FEATURES` — feature extractor the model was trained on: `rich` (default), `material`, or `kcp`, or
+  *     `rich-pdi-11-v1` (11 columns).
   *   - `ORACLE_CANDIDATE_LIMIT` — expectimax candidate width (default: the engine's own).
   *   - `PRE_RANK_WITH_MODEL` — use the leaf model to pre-rank expectimax candidates (`false` by default).
   *   - `TT_ENABLED` — enable the per-Strategy transposition table (`false` by default).
