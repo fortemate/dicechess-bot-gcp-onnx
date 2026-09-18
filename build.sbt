@@ -34,7 +34,7 @@ ThisBuild / developers := List(
 val DiceChessEngineVersion     = "0.12.0"
 val DiceChessBotRuntimeVersion = "2.0.0"
 // ONNX Runtime version as documented by the engine: https://fortemate.github.io/dicechess-engine/artifacts/
-val OnnxRuntimeVersion         = "1.29.0"
+val OnnxRuntimeVersion         = "1.30.0"
 val CirceVersion               = "0.14.16"
 val MunitVersion               = "1.3.6"
 
