@@ -31,7 +31,7 @@ ThisBuild / developers := List(
 )
 
 // Both Fortemate libraries are public Maven Central artifacts; no repository credentials are required.
-val DiceChessEngineVersion     = "0.9.1"
+val DiceChessEngineVersion     = "0.12.0"
 val DiceChessBotRuntimeVersion = "2.0.0"
 // ONNX Runtime version as documented by the engine: https://fortemate.github.io/dicechess-engine/artifacts/
 val OnnxRuntimeVersion         = "1.29.0"
