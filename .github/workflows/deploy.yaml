@@ -52,7 +52,7 @@ jobs:
         uses: sbt/setup-sbt@6158cb0903b8ceeae04f830055f3155e1b6a5ad7 # v1.5.11
 
       - name: Run validation and build fat jar
-        run: sbt 'scalafixAll --check; clean; scalafmtCheckAll; testAll; assembly'
+        run: sbt 'scalafixAll --check; clean; scalafmtCheckAll; scalafmtSbtCheck; testAll; assembly'
 
       - name: Smoke-test runnable jar
         run: |

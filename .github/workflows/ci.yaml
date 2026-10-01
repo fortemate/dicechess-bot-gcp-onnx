@@ -52,7 +52,7 @@ jobs:
         run: sbt --version
 
       - name: Check formatting
-        run: sbt --server scalafmtCheckAll
+        run: sbt --server 'scalafmtCheckAll; scalafmtSbtCheck'
 
       - name: Run validation
         run: sbt 'scalafixAll --check; clean; testAll'
