@@ -338,6 +338,47 @@ object Strategy:
     case "material" | ""  => OnnxFeatures.extract
     case other            => sys.error(s"unknown ORACLE_FEATURES '$other' (expected material|rich|kcp|rich-pdi-11-v1)")
 
+  private def resolveBookProvenance(bookPath: Option[String]): (Map[String, String], Option[ArtifactProvenance]) =
+    val bookArtifact = bookPath match
+      case Some(path) =>
+        Some(
+          ArtifactProvenance.inspect(
+            path,
+            sys.env.get("OPENING_BOOK_SHA256"),
+            sys.env.get("OPENING_BOOK_ID")
+          )
+        )
+      case None => Some(ArtifactProvenance.inspectResource("opening_book.tsv", "bundled-sample"))
+    if bookPath.isEmpty && sys.env.contains("OPENING_BOOK_SHA256") then
+      sys.error("OPENING_BOOK_SHA256 requires OPENING_BOOK_PATH")
+    val openingBook = loadOpeningBook(bookPath)
+    bookPath.foreach(path => println(s"[bot] opening book: $path (${openingBook.size} entries)"))
+    (openingBook, bookArtifact)
+
+  private def resolveRescore(searchMode: SearchMode): (Option[RootRescoreModel], Option[ArtifactProvenance]) =
+    val rescore = searchMode match
+      case SearchMode.OnePly =>
+        if sys.env.get("RESCORE_MODEL_PATH").exists(_.nonEmpty) then
+          sys.error("RESCORE_MODEL_PATH is only supported when SEARCH_MODE=expectimax")
+        None
+      case SearchMode.Expectimax =>
+        sys.env.get("RESCORE_MODEL_PATH").filter(_.nonEmpty).map { rescorePath =>
+          val weight = sys.env.get("RESCORE_WEIGHT").fold(0.5) { raw =>
+            raw.toDoubleOption
+              .getOrElse(sys.error(s"invalid RESCORE_WEIGHT '$raw' (expected a number in (0, 1])"))
+          }
+          RootRescoreModel(rescorePath, KcpFeatures.extract, weight)
+        }
+    val rescoreArtifact = sys.env
+      .get("RESCORE_MODEL_PATH")
+      .filter(_.nonEmpty)
+      .map(path =>
+        ArtifactProvenance.inspect(path, sys.env.get("RESCORE_MODEL_SHA256"), sys.env.get("RESCORE_MODEL_ID"))
+      )
+    if rescore.isEmpty && sys.env.contains("RESCORE_MODEL_SHA256") then
+      sys.error("RESCORE_MODEL_SHA256 requires RESCORE_MODEL_PATH")
+    (rescore, rescoreArtifact)
+
   /** Production wiring. `MODEL_PATH` points at the mounted ONNX model (`ORACLE_FEATURES=rich` for the `oracle-3`
     * weights); unset falls back to the bundled synthetic model so the bot still boots and plays legal — if signal-free
     * — moves out of the box.
@@ -361,49 +402,14 @@ object Strategy:
     val bookPath       = sys.env.get("OPENING_BOOK_PATH").filter(_.nonEmpty)
     if searchMode == SearchMode.OnePly && (preRankModel || ttEnabled) then
       sys.error("PRE_RANK_WITH_MODEL and TT_ENABLED are only supported when SEARCH_MODE=expectimax")
-    val tt           = Option.when(ttEnabled)(new TranspositionTable(ttCapacity))
-    val bookArtifact = bookPath match
-      case Some(path) =>
-        Some(
-          ArtifactProvenance.inspect(
-            path,
-            sys.env.get("OPENING_BOOK_SHA256"),
-            sys.env.get("OPENING_BOOK_ID")
-          )
-        )
-      case None => Some(ArtifactProvenance.inspectResource("opening_book.tsv", "bundled-sample"))
-    if bookPath.isEmpty && sys.env.contains("OPENING_BOOK_SHA256") then
-      sys.error("OPENING_BOOK_SHA256 requires OPENING_BOOK_PATH")
-    val openingBook = loadOpeningBook(bookPath)
-    bookPath.foreach(path => println(s"[bot] opening book: $path (${openingBook.size} entries)"))
+    val tt                          = Option.when(ttEnabled)(new TranspositionTable(ttCapacity))
+    val (openingBook, bookArtifact) = resolveBookProvenance(bookPath)
     sys.env.get("MODEL_PATH").filter(_.nonEmpty) match
       case Some(path) =>
         val features      = sys.env.getOrElse("ORACLE_FEATURES", "rich")
         val modelArtifact = ArtifactProvenance.inspect(path, sys.env.get("MODEL_SHA256"), sys.env.get("MODEL_ID"))
-        val rescore       = searchMode match
-          case SearchMode.OnePly =>
-            if sys.env.get("RESCORE_MODEL_PATH").exists(_.nonEmpty) then
-              sys.error("RESCORE_MODEL_PATH is only supported when SEARCH_MODE=expectimax")
-            None
-          case SearchMode.Expectimax =>
-            sys.env.get("RESCORE_MODEL_PATH").filter(_.nonEmpty).map { rescorePath =>
-              // Fail fast on an unparsable weight: an out-of-range value already crashes at boot (RootRescore's range
-              // check), and a typo silently degrading to the 0.5 default would be the worse failure mode of the two.
-              val weight = sys.env.get("RESCORE_WEIGHT").fold(0.5) { raw =>
-                raw.toDoubleOption
-                  .getOrElse(sys.error(s"invalid RESCORE_WEIGHT '$raw' (expected a number in (0, 1])"))
-              }
-              RootRescoreModel(rescorePath, KcpFeatures.extract, weight)
-            }
-        val rescoreArtifact = sys.env
-          .get("RESCORE_MODEL_PATH")
-          .filter(_.nonEmpty)
-          .map(path =>
-            ArtifactProvenance.inspect(path, sys.env.get("RESCORE_MODEL_SHA256"), sys.env.get("RESCORE_MODEL_ID"))
-          )
-        if rescore.isEmpty && sys.env.contains("RESCORE_MODEL_SHA256") then
-          sys.error("RESCORE_MODEL_SHA256 requires RESCORE_MODEL_PATH")
-        val rescoreNote = rescore.fold("")(r => s", rescore=${r.modelPath} (weight=${r.weight})")
+        val (rescore, rescoreArtifact) = resolveRescore(searchMode)
+        val rescoreNote                = rescore.fold("")(r => s", rescore=${r.modelPath} (weight=${r.weight})")
         println(
           s"[bot] ONNX model: $path (mode=${searchMode.id}, features=$features, " +
             s"timePolicy=${timePolicy.id}, candidateLimit=$candidateLimit$rescoreNote)"

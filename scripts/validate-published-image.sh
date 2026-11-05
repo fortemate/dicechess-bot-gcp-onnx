@@ -28,7 +28,8 @@ fail() {
 }
 
 require_command() {
-  command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
+  local cmd="$1"
+  command -v "$cmd" >/dev/null 2>&1 || fail "required command not found: $cmd"
 }
 
 release_tag=""

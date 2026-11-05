@@ -4,8 +4,10 @@ import java.nio.file.Files
 
 class ArtifactProvenanceSuite extends munit.FunSuite:
 
+  private val ArtifactProvenancePrefix = "artifact-provenance"
+
   test("computes and verifies a configured SHA-256 without retaining file contents"):
-    val path = Files.createTempFile("artifact-provenance", ".bin")
+    val path = Files.createTempFile(ArtifactProvenancePrefix, ".bin")
     try
       Files.writeString(path, "dicechess")
       val expected = "14080a0f99a3e4a4bb8056eee6dcdca3b8d18eefe46d6f716fb5f0329a59847e"
@@ -14,7 +16,7 @@ class ArtifactProvenanceSuite extends munit.FunSuite:
     finally Files.deleteIfExists(path)
 
   test("fails closed on a digest mismatch"):
-    val path = Files.createTempFile("artifact-provenance", ".bin")
+    val path = Files.createTempFile(ArtifactProvenancePrefix, ".bin")
     try
       Files.writeString(path, "dicechess")
       val expected = "0" * 64
@@ -25,7 +27,7 @@ class ArtifactProvenanceSuite extends munit.FunSuite:
     finally Files.deleteIfExists(path)
 
   test("rejects malformed expected digests before accessing the artifact"):
-    val path = Files.createTempFile("artifact-provenance", ".bin")
+    val path = Files.createTempFile(ArtifactProvenancePrefix, ".bin")
     try
       Files.delete(path)
       val error = intercept[RuntimeException] {
@@ -56,7 +58,7 @@ class ArtifactProvenanceSuite extends munit.FunSuite:
     )
 
   test("accepts upper-case expected digest and returns lower-case actual digest"):
-    val path = Files.createTempFile("artifact-provenance", ".bin")
+    val path = Files.createTempFile(ArtifactProvenancePrefix, ".bin")
     try
       Files.writeString(path, "dicechess")
       val expectedLower = "14080a0f99a3e4a4bb8056eee6dcdca3b8d18eefe46d6f716fb5f0329a59847e"
@@ -66,7 +68,7 @@ class ArtifactProvenanceSuite extends munit.FunSuite:
     finally Files.deleteIfExists(path)
 
   test("reports expected digest in lower case on mismatch even when configured in upper case"):
-    val path = Files.createTempFile("artifact-provenance", ".bin")
+    val path = Files.createTempFile(ArtifactProvenancePrefix, ".bin")
     try
       Files.writeString(path, "dicechess")
       val actualLower = "14080a0f99a3e4a4bb8056eee6dcdca3b8d18eefe46d6f716fb5f0329a59847e"
@@ -83,7 +85,7 @@ class ArtifactProvenanceSuite extends munit.FunSuite:
     finally Files.deleteIfExists(path)
 
   test("falls back to file name when configuredId is None or empty"):
-    val path = Files.createTempFile("artifact-provenance", ".bin")
+    val path = Files.createTempFile(ArtifactProvenancePrefix, ".bin")
     try
       Files.writeString(path, "dicechess")
       val expectedId  = path.getFileName.toString
