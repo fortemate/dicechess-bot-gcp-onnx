@@ -7,7 +7,7 @@ ThisBuild / organizationHomepage := Some(uri("https://fortemate.com"))
 ThisBuild / homepage             := Some(uri("https://fortemate.com"))
 ThisBuild / startYear            := Some(2026)
 ThisBuild / version              := "0.1.0-SNAPSHOT"
-ThisBuild / scalaVersion         := "3.10.0"
+ThisBuild / scalaVersion         := "3.10.1"
 
 ThisBuild / description :=
   "Dice Chess webhook bot for Google Cloud Run, powered by ONNX 2-ply expectimax search and an opening book."
@@ -34,7 +34,7 @@ ThisBuild / developers := List(
 val DiceChessEngineVersion     = "0.18.4"
 val DiceChessBotRuntimeVersion = "2.0.0"
 // ONNX Runtime version as documented by the engine: https://fortemate.github.io/dicechess-engine/artifacts/
-val OnnxRuntimeVersion = "1.31.1"
+val OnnxRuntimeVersion = "1.32.0"
 val CirceVersion       = "0.14.17"
 val MunitVersion       = "1.3.6"
 
